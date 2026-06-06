@@ -1,5 +1,0 @@
-input: hello
----
-input:
-  command: ls
-  path: /root
