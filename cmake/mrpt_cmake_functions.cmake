@@ -19,6 +19,10 @@ include(GNUInstallDirs) # for install dirs in multilib
 include(CMakePackageConfigHelpers)
 include(CTest)
 
+# ROS build farm for Humble does NOT pass "-DBUILD_TESTING=OFF" in bin builds
+# so we must default to NOT building tests until the oldest supported ROS distro does :-(
+option(BUILD_TESTING "Build tests" OFF)
+
 # Build static or dynamic libs?
 # ===================================================
 # Default: dynamic libraries (except if building to JavaScript code)
@@ -878,6 +882,11 @@ function(mrpt_add_python_module MODULE_NAME CPP_SOURCES)
     mrpt_ament_cmake_python_get_python_install_dir()
     pybind11_add_module(_bindings MODULE ${CPP_SOURCES})
     target_link_libraries(_bindings PRIVATE ${PROJECT_NAME})
+    # pybind11/eigen.h includes <Eigen/Core> unconditionally; link Eigen3 directly
+    # so that bindings compile even when Eigen is PRIVATE to the parent library.
+    if (TARGET Eigen3::Eigen)
+      target_link_libraries(_bindings PRIVATE Eigen3::Eigen)
+    endif()
     target_include_directories(_bindings PRIVATE include)
 
     # Direct the .so into a staging python tree under the build directory so
