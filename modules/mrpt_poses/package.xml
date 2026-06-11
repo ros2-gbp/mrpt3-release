@@ -5,7 +5,7 @@
 -->
 <package format="3">
   <name>mrpt_poses</name>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
   <description>The MRPT C++ library mrpt_poses</description>
 
   <maintainer email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</maintainer>
@@ -19,6 +19,7 @@
   <depend>mrpt_common</depend>
   <depend>mrpt_bayes</depend>
 
+  <build_depend>eigen</build_depend>
   <build_depend>pybind11-dev</build_depend>
   <build_depend>python3-dev</build_depend>
 
