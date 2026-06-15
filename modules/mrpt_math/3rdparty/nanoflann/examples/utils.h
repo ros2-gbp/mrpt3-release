@@ -1,7 +1,7 @@
 /***********************************************************************
  * Software License Agreement (BSD License)
  *
- * Copyright 2011-2024 Jose Luis Blanco (joseluisblancoc@gmail.com).
+ * Copyright 2011-2026 Jose Luis Blanco (joseluisblancoc@gmail.com).
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -80,15 +80,14 @@ void generateRandomPointCloudRanges(
     pc.pts.resize(N);
     for (size_t i = 0; i < N; i++)
     {
-        pc.pts[i].x = max_range_x * (rand() % 1000) / T(1000);
-        pc.pts[i].y = max_range_y * (rand() % 1000) / T(1000);
-        pc.pts[i].z = max_range_z * (rand() % 1000) / T(1000);
+        pc.pts[i].x = max_range_x * T(rand() % 1000) / T(1000);
+        pc.pts[i].y = max_range_y * T(rand() % 1000) / T(1000);
+        pc.pts[i].z = max_range_z * T(rand() % 1000) / T(1000);
     }
 }
 
 template <typename T>
-void generateRandomPointCloud(
-    PointCloud<T>& pc, const size_t N, const T max_range = 10)
+void generateRandomPointCloud(PointCloud<T>& pc, const size_t N, const T max_range = 10)
 {
     generateRandomPointCloudRanges(pc, N, max_range, max_range, max_range);
 }
@@ -143,18 +142,17 @@ void generateRandomPointCloud_Quat(PointCloud_Quat<T>& point, const size_t N)
     T theta, X, Y, Z, sinAng, cosAng, mag;
     for (size_t i = 0; i < N; i++)
     {
-        theta = static_cast<T>(
-            nanoflann::pi_const<double>() * (((double)rand()) / RAND_MAX));
+        theta = static_cast<T>(nanoflann::pi_const<double>() * (((double)rand()) / RAND_MAX));
         // Generate random value in [-1, 1]
         X   = static_cast<T>(2 * (((double)rand()) / RAND_MAX) - 1);
         Y   = static_cast<T>(2 * (((double)rand()) / RAND_MAX) - 1);
         Z   = static_cast<T>(2 * (((double)rand()) / RAND_MAX) - 1);
-        mag = sqrt(X * X + Y * Y + Z * Z);
+        mag = static_cast<T>(sqrt(X * X + Y * Y + Z * Z));
         X /= mag;
         Y /= mag;
         Z /= mag;
-        cosAng         = cos(theta / 2);
-        sinAng         = sin(theta / 2);
+        cosAng         = static_cast<T>(cos(theta / 2));
+        sinAng         = static_cast<T>(sin(theta / 2));
         point.pts[i].w = cosAng;
         point.pts[i].x = X * sinAng;
         point.pts[i].y = Y * sinAng;
@@ -199,16 +197,14 @@ struct PointCloud_Orient
 };
 
 template <typename T>
-void generateRandomPointCloud_Orient(
-    PointCloud_Orient<T>& point, const size_t N)
+void generateRandomPointCloud_Orient(PointCloud_Orient<T>& point, const size_t N)
 {
     // Generating Random Orientations
     point.pts.resize(N);
     for (size_t i = 0; i < N; i++)
     {
         point.pts[i].theta = static_cast<T>(
-            (2 * nanoflann::pi_const<double>() *
-             (((double)rand()) / RAND_MAX)) -
+            (2 * nanoflann::pi_const<double>() * (((double)rand()) / RAND_MAX)) -
             nanoflann::pi_const<double>());
     }
 }
