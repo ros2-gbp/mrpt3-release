@@ -1,7 +1,7 @@
 /***********************************************************************
  * Software License Agreement (BSD License)
  *
- * Copyright 2011-2024 Jose Luis Blanco (joseluisblancoc@gmail.com).
+ * Copyright 2011-2026 Jose Luis Blanco (joseluisblancoc@gmail.com).
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,6 +34,8 @@
 
 #include "utils.h"
 
+namespace
+{
 void kdtree_save_load_demo(const size_t N)
 {
     PointCloud<double> cloud;
@@ -41,24 +43,25 @@ void kdtree_save_load_demo(const size_t N)
     // Generate points:
     generateRandomPointCloud(cloud, N);
 
-    double query_pt[3] = {0.5, 0.5, 0.5};
+    const double query_pt[3] = {0.5, 0.5, 0.5};
 
     // construct a kd-tree index:
     using my_kd_tree_t = nanoflann::KDTreeSingleIndexAdaptor<
-        nanoflann::L2_Simple_Adaptor<double, PointCloud<double>>,
-        PointCloud<double>, 3 /* dim */
+        nanoflann::L2_Simple_Adaptor<double, PointCloud<double>>, PointCloud<double>, 3 /* dim */
         >;
 
     // Construct the index and save it:
     // --------------------------------------------
     {
-        my_kd_tree_t index(
-            3 /*dim*/, cloud,
-            nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */));
+        const my_kd_tree_t index(
+            3 /*dim*/, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10 /* max leaf */));
 
         std::ofstream f("index.bin", std::ofstream::binary);
 
-        if (f.bad()) throw std::runtime_error("Error writing index file!");
+        if (f.bad())
+        {
+            throw std::runtime_error("Error writing index file!");
+        }
 
         index.saveIndex(f);
         f.close();
@@ -74,8 +77,8 @@ void kdtree_save_load_demo(const size_t N)
         my_kd_tree_t index(
             3 /*dim*/, cloud,
             nanoflann::KDTreeSingleIndexAdaptorParams(
-                10 /* max leaf */, nanoflann::KDTreeSingleIndexAdaptorFlags::
-                                       SkipInitialBuildIndex));
+                10 /* max leaf */,
+                nanoflann::KDTreeSingleIndexAdaptorFlags::SkipInitialBuildIndex));
 
         std::ifstream f("index.bin", std::ofstream::binary);
 
@@ -93,25 +96,33 @@ void kdtree_save_load_demo(const size_t N)
         index.findNeighbors(resultSet, &query_pt[0]);
 
         std::cout << "knnSearch(nn=" << num_results << "): \n";
-        std::cout << "ret_index=" << ret_index
-                  << " out_dist_sqr=" << out_dist_sqr << std::endl;
+        std::cout << "ret_index=" << ret_index << " out_dist_sqr=" << out_dist_sqr << "\n";
     }
 
     // Stress test: try to save an empty index
     {
-        PointCloud<double> emptyCloud;
-        my_kd_tree_t       index(3 /*dim*/, emptyCloud);
-        std::ofstream      f("index2.bin", std::ofstream::binary);
+        const PointCloud<double> emptyCloud;
+        const my_kd_tree_t       index(3 /*dim*/, emptyCloud);
+        std::ofstream            f("index2.bin", std::ofstream::binary);
         if (f.bad()) throw std::runtime_error("Error writing index file!");
         index.saveIndex(f);
         f.close();
     }
 }
+}  // namespace
 
 int main()
 {
-    // Randomize Seed
-    srand(static_cast<unsigned int>(time(nullptr)));
-    kdtree_save_load_demo(100000);
-    return 0;
+    try
+    {
+        // Randomize Seed
+        srand(static_cast<unsigned int>(time(nullptr)));
+        kdtree_save_load_demo(100000);
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << e.what() << "\n";
+        return 1;
+    }
 }
