@@ -1,7 +1,7 @@
 /***********************************************************************
  * Software License Agreement (BSD License)
  *
- * Copyright 2011-2024 Jose Luis Blanco (joseluisblancoc@gmail.com).
+ * Copyright 2011-2026 Jose Luis Blanco (joseluisblancoc@gmail.com).
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,6 +33,9 @@
 
 #include "utils.h"
 
+namespace
+{
+
 template <typename num_t>
 void kdtree_demo(const size_t N)
 {
@@ -45,8 +48,8 @@ void kdtree_demo(const size_t N)
 
     // construct a kd-tree index:
     using my_kd_tree_t = nanoflann::KDTreeSingleIndexAdaptor<
-        nanoflann::SO2_Adaptor<num_t, PointCloud_Orient<num_t>>,
-        PointCloud_Orient<num_t>, 1 /* dim */
+        nanoflann::SO2_Adaptor<num_t, PointCloud_Orient<num_t>>, PointCloud_Orient<num_t>,
+        1 /* dim */
         >;
 
     dump_mem_usage();
@@ -64,16 +67,24 @@ void kdtree_demo(const size_t N)
         index.findNeighbors(resultSet, &query_pt[0]);
 
         std::cout << "knnSearch(nn=" << num_results << "): \n";
-        std::cout << "ret_index=" << ret_index
-                  << " out_dist_sqr=" << out_dist_sqr << std::endl;
+        std::cout << "ret_index=" << ret_index << " out_dist_sqr=" << out_dist_sqr << std::endl;
     }
 }
+}  // namespace
 
 int main()
 {
-    // Randomize Seed
-    srand(static_cast<unsigned int>(time(nullptr)));
-    kdtree_demo<float>(1000000);
-    kdtree_demo<double>(1000000);
-    return 0;
+    try
+    {
+        // Randomize Seed
+        srand(static_cast<unsigned int>(time(nullptr)));
+        kdtree_demo<float>(1000000);
+        kdtree_demo<double>(1000000);
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << e.what() << "\n";
+        return 1;
+    }
 }

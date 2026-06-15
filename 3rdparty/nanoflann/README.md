@@ -5,6 +5,15 @@
 [![CI Check clang-format](https://github.com/jlblancoc/nanoflann/actions/workflows/check-clang-format.yml/badge.svg)](https://github.com/jlblancoc/nanoflann/actions/workflows/check-clang-format.yml)
 [![CircleCI](https://circleci.com/gh/jlblancoc/nanoflann/tree/master.svg?style=svg)](https://circleci.com/gh/jlblancoc/nanoflann/tree/master)
 [![Windows build status](https://ci.appveyor.com/api/projects/status/h8k1apfogxyqhskd/branch/master?svg=true)](https://ci.appveyor.com/project/jlblancoc/nanoflann/branch/master)
+[![codecov](https://codecov.io/gh/jlblancoc/nanoflann/graph/badge.svg?token=yOKq5lpizE)](https://codecov.io/gh/jlblancoc/nanoflann)
+
+| Distro | Build dev | Build releases |
+| ---    | ---       | ---            |
+| ROS 2 Humble (u22.04) | [![Build Status](https://build.ros2.org/job/Hdev__nanoflann__ubuntu_jammy_amd64/badge/icon)](https://build.ros2.org/job/Hdev__nanoflann__ubuntu_jammy_amd64/) | amd64 [![Build Status](https://build.ros2.org/job/Hbin_uJ64__nanoflann__ubuntu_jammy_amd64__binary/badge/icon)](https://build.ros2.org/job/Hbin_uJ64__nanoflann__ubuntu_jammy_amd64__binary/) <br> arm64 [![Build Status](https://build.ros2.org/job/Hbin_ujv8_uJv8__nanoflann__ubuntu_jammy_arm64__binary/badge/icon)](https://build.ros2.org/job/Hbin_ujv8_uJv8__nanoflann__ubuntu_jammy_arm64__binary/) |
+| ROS 2 Jazzy (u24.04) | [![Build Status](https://build.ros2.org/job/Jdev__nanoflann__ubuntu_noble_amd64/badge/icon)](https://build.ros2.org/job/Jdev__nanoflann__ubuntu_noble_amd64/) | amd64 [![Build Status](https://build.ros2.org/job/Jbin_uN64__nanoflann__ubuntu_noble_amd64__binary/badge/icon)](https://build.ros2.org/job/Jbin_uN64__nanoflann__ubuntu_noble_amd64__binary/) <br> arm64 [![Build Status](https://build.ros2.org/job/Jbin_unv8_uNv8__nanoflann__ubuntu_noble_arm64__binary/badge/icon)](https://build.ros2.org/job/Jbin_unv8_uNv8__nanoflann__ubuntu_noble_arm64__binary/) |
+| ROS 2 Kilted (u24.04) | [![Build Status](https://build.ros2.org/job/Kdev__nanoflann__ubuntu_noble_amd64/badge/icon)](https://build.ros2.org/job/Kdev__nanoflann__ubuntu_noble_amd64/) | amd64 [![Build Status](https://build.ros2.org/job/Kbin_uN64__nanoflann__ubuntu_noble_amd64__binary/badge/icon)](https://build.ros2.org/job/Kbin_uN64__nanoflann__ubuntu_noble_amd64__binary/) <br> arm64 [![Build Status](https://build.ros2.org/job/Kbin_unv8_uNv8__nanoflann__ubuntu_noble_arm64__binary/badge/icon)](https://build.ros2.org/job/Kbin_unv8_uNv8__nanoflann__ubuntu_noble_arm64__binary/) |
+| ROS 2 Lyrical (u26.04) | [![Build Status](https://build.ros2.org/job/Ldev__nanoflann__ubuntu_resolute_amd64/badge/icon)](https://build.ros2.org/job/Ldev__nanoflann__ubuntu_resolute_amd64/) | amd64 [![Build Status](https://build.ros2.org/job/Lbin_uR64__nanoflann__ubuntu_resolute_amd64__binary/badge/icon)](https://build.ros2.org/job/Lbin_uR64__nanoflann__ubuntu_resolute_amd64__binary/) <br> arm64 [![Build Status](https://build.ros2.org/job/Lbin_urv8_uRv8__nanoflann__ubuntu_resolute_arm64__binary/badge/icon)](https://build.ros2.org/job/Lbin_urv8_uRv8__nanoflann__ubuntu_resolute_arm64__binary/) |
+| ROS 2 Rolling (u26.04) | [![Build Status](https://build.ros2.org/job/Rdev__nanoflann__ubuntu_noble_amd64/badge/icon)](https://build.ros2.org/job/Rdev__nanoflann__ubuntu_noble_amd64/) | amd64 [![Build Status](https://build.ros2.org/job/Rbin_uN64__nanoflann__ubuntu_noble_amd64__binary/badge/icon)](https://build.ros2.org/job/Rbin_uN64__nanoflann__ubuntu_noble_amd64__binary/) <br> arm64 [![Build Status](https://build.ros2.org/job/Rbin_unv8_uNv8__nanoflann__ubuntu_noble_arm64__binary/badge/icon)](https://build.ros2.org/job/Rbin_unv8_uNv8__nanoflann__ubuntu_noble_arm64__binary/) |
 
 
 ## 1. About
@@ -23,12 +32,12 @@ Cite as:
 }
 ```
 
-See the release [CHANGELOG](CHANGELOG.md) for a list of project changes.
+See the release [CHANGELOG](CHANGELOG.rst) for a list of project changes.
 
 ### 1.1. Obtaining the code
 
 * Easiest way: clone this GIT repository and take the `include/nanoflann.hpp` file for use where you need it.
-* Debian or Ubuntu ([21.04 or newer](https://packages.ubuntu.com/source/hirsute/nanoflann)) users can install it simply with:
+* Debian or Ubuntu ([21.04 or newer](https://launchpad.net/ubuntu/+source/nanoflann)) users can install it simply with:
   ```bash 
   $ sudo apt install libnanoflann-dev
   ```
@@ -104,10 +113,14 @@ Refer to the examples below or to the C++ API of [nanoflann::KDTreeSingleIndexAd
     * [nanoflann::KDTreeSingleIndexAdaptor<>](https://jlblancoc.github.io/nanoflann/classnanoflann_1_1KDTreeSingleIndexAdaptor.html)`::radiusSearch()`
       * Finds all the neighbors to `query_point[0:dim-1]` within a maximum radius. The output is given as a vector of pairs, of which the first element is a point index and the second the corresponding distance. See an [example usage code](https://github.com/jlblancoc/nanoflann/blob/master/examples/pointcloud_kdd_radius.cpp#L141).
     * [nanoflann::KDTreeSingleIndexAdaptor<>](https://jlblancoc.github.io/nanoflann/classnanoflann_1_1KDTreeSingleIndexAdaptor.html)`::radiusSearchCustomCallback()`
-	  * Can be used to receive a callback for each point found in range. This may be more efficient in some situations instead of building a huge vector of pairs with the results.
+    * Can be used to receive a callback for each point found in range. This may be more efficient in some situations instead of building a huge vector of pairs with the results.
+    * [nanoflann::KDTreeSingleIndexAdaptor<>](https://jlblancoc.github.io/nanoflann/classnanoflann_1_1KDTreeSingleIndexAdaptor.html)`::findWithinBox()` [New in 1.8.0]: Optimized search within a given axis-aligned bound box.
   * Working with 2D and 3D point clouds or N-dimensional data sets.
   * Working directly with `Eigen::Matrix<>` classes (matrices and vectors-of-vectors).
-  * Working with dynamic point clouds without a need to rebuild entire kd-tree index.
+  * Working with dynamic point clouds without a need to rebuild entire kd-tree index. Two options:
+    * `nanoflann::KDTreeSingleIndexDynamicAdaptor<>`: the Bentley–Saxe "logarithmic forest" of static sub-trees.
+    * `nanoflann::KDTreeSingleIndexIncrementalAdaptor<>` [New]: a single self-balancing tree, recommended for sliding-window LiDAR-style maps. Supports incremental `addPoints`, lazy `removePoint`, and axis-aligned box trimming (`removeBox` / `removeOutsideBox`) with bounded memory under churn. See the design & benchmark report in [nanoflann-benchmark/incrementalTests](https://github.com/MRPT/nanoflann-benchmark/tree/master/incrementalTests/REPORT.md).
+    * `nanoflann::KDTreeSingleIndexIncrementalAdaptorMT<>` [New]: the same index with the large rebalancing rebuilds offloaded to a background thread, to bound the foreground update-latency tail (see the [threading analysis](https://github.com/MRPT/nanoflann-benchmark/tree/master/incrementalTests/async_rebalance.md)). Disabled under `NANOFLANN_NO_THREADS`.
   * Working with the distance metrics:
     * `R^N`: Euclidean spaces:
       * `L1` (Manhattan)
@@ -181,6 +194,13 @@ The nanoflann port in vcpkg is kept up to date by Microsoft team members and com
 
   * `NANOFLANN_FIRST_MATCH`: If defined and two points have the same distance, the one with the lowest-index will be returned first. Otherwise there is no particular order.
   * `NANOFLANN_NO_THREADS`: If defined, multithreading capabilities will be disabled, so that the library can be used without linking with pthreads. If one tries to use multiple threads, an exception will be thrown.
+  * `NANOFLANN_NODE_ALIGNMENT`: The memory alignment, in bytes, used for KD-tree nodes. Defaults to `16`.
+
+### 1.10. Thread safety
+
+  * **Index build**: pass `n_thread_build > 1` in `KDTreeSingleIndexAdaptorParams` to parallelize the build via `std::async` (unless `NANOFLANN_NO_THREADS` is defined).
+  * **Queries**: `findNeighbors()`, `knnSearch()`, `radiusSearch()` and `rknnSearch()` are `const` and safe to call concurrently from multiple threads on the same index, as long as no thread is concurrently building or modifying it.
+  * The internal `PooledAllocator` is **not** thread-safe, so building an index from multiple threads (or mixing queries with an in-progress build) is not supported.
 
 ------
 
