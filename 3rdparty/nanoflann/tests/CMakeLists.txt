@@ -1,46 +1,50 @@
-# ----------------------------------------------------------------------------
-#   TESTS
-# ----------------------------------------------------------------------------
-PROJECT(tests)
-
 # Fix a "bug" in VS11 (MSVC 2012):
 if(MSVC)
-	add_definitions(-D_VARIADIC_MAX=10)
-endif(MSVC)
+    add_compile_definitions(_VARIADIC_MAX=10)
+endif()
 
+# Find or build GTest
 if(NANOFLANN_USE_SYSTEM_GTEST)
-	find_package(GTest REQUIRED)
+    find_package(GTest REQUIRED)
+    set(GTEST_TARGET GTest::gtest)
 else()
-	# Treat this directory as "system" to ignore pedantic warnings.
-	if(CMAKE_COMPILER_IS_GNUCXX)
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem gtest-1.8.0/include")
-	endif()
+    # EXCLUDE_FROM_ALL prevents gtest from being installed with your project
+    add_subdirectory(gtest-1.8.0 EXCLUDE_FROM_ALL)
 
-	# Compile gtest from sources:
-	add_subdirectory(gtest-1.8.0)
-	INCLUDE_DIRECTORIES("gtest-1.8.0/include/")
+    set(GTEST_TARGET mygtest)
+
+    # Mark local GTest headers as SYSTEM to suppress pedantic warnings from them
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_include_directories(${GTEST_TARGET} SYSTEM INTERFACE "gtest-1.8.0/include")
+    else()
+        target_include_directories(${GTEST_TARGET} INTERFACE "gtest-1.8.0/include")
+    endif()
 endif()
 
-set(EXECUTABLE_OUTPUT_PATH "${${PROJECT_NAME}_BINARY_DIR}")
+# Test executable
+add_executable(nanoflann_unit_tests
+  test_kdtree_basic.cpp
+  test_kdtree_dynamic.cpp
+  test_kdtree_incremental.cpp
+  test_main.cpp
+)
+set_target_properties(nanoflann_unit_tests PROPERTIES FOLDER "./")
 
-# Tests based on Google gtest:
-# -----------------------------
-
-# If using system library, add C++ flags:
-if (UNIX)
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
-endif()
-
-# Test project:
-ADD_EXECUTABLE(unit_tests test_main.cpp)
-set_target_properties(unit_tests PROPERTIES FOLDER "./")
-ADD_TEST(unit_tests_build "${CMAKE_COMMAND}" --build ${CMAKE_BINARY_DIR} --target unit_tests)
-ADD_TEST(unit_tests_run ${EXECUTABLE_OUTPUT_PATH}/unit_tests)
-set_tests_properties(unit_tests_run PROPERTIES DEPENDS unit_tests_build)
-
-# Add the required libraries for linking:
-if(NANOFLANN_USE_SYSTEM_GTEST)
-	target_link_libraries(unit_tests GTest::gtest nanoflann)
+if(MSVC)
+    target_compile_options(nanoflann_unit_tests PRIVATE /W4)
 else()
-	target_link_libraries(unit_tests mygtest nanoflann)
+    target_compile_options(nanoflann_unit_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+    )
 endif()
+
+find_package(Threads REQUIRED)
+
+target_link_libraries(nanoflann_unit_tests
+    PRIVATE
+        ${GTEST_TARGET}
+        nanoflann::nanoflann
+        Threads::Threads
+)
+
+add_test(NAME nanoflann_unit_tests COMMAND nanoflann_unit_tests)
