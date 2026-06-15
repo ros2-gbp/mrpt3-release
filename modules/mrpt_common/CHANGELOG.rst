@@ -2,6 +2,9 @@
 Changelog for package mrpt_common
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.0.3 (2026-06-15)
+------------------
+
 3.0.2 (2026-06-11)
 ------------------
 * fix: BUILD_TESTING=OFF default was ignored due to include(CTest) ordering
