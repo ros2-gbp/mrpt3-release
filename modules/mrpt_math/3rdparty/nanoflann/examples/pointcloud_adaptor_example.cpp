@@ -1,7 +1,7 @@
 /***********************************************************************
  * Software License Agreement (BSD License)
  *
- * Copyright 2011-2024 Jose Luis Blanco (joseluisblancoc@gmail.com).
+ * Copyright 2011-2026 Jose Luis Blanco (joseluisblancoc@gmail.com).
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -36,6 +36,9 @@
 
 void dump_mem_usage();
 
+namespace
+{
+
 // And this is the "dataset to kd-tree" adaptor class:
 template <typename Derived>
 struct PointCloudAdaptor
@@ -51,10 +54,7 @@ struct PointCloudAdaptor
     inline const Derived& derived() const { return obj; }
 
     // Must return the number of data points
-    inline size_t kdtree_get_point_count() const
-    {
-        return derived().pts.size();
-    }
+    inline size_t kdtree_get_point_count() const { return derived().pts.size(); }
 
     // Returns the dim'th component of the idx'th point in the class:
     // Since this is inlined and the "dim" argument is typically an immediate
@@ -101,7 +101,8 @@ void kdtree_demo(const size_t N)
 
     dump_mem_usage();
 
-    auto do_knn_search = [](const my_kd_tree_t& index) {
+    auto do_knn_search = [](const my_kd_tree_t& index)
+    {
         // do a knn search
         const size_t                   num_results = 1;
         size_t                         ret_index;
@@ -113,8 +114,7 @@ void kdtree_demo(const size_t N)
         index.findNeighbors(resultSet, &query_pt[0]);
 
         std::cout << "knnSearch(nn=" << num_results << "): \n";
-        std::cout << "ret_index=" << ret_index
-                  << " out_dist_sqr=" << out_dist_sqr << std::endl;
+        std::cout << "ret_index=" << ret_index << " out_dist_sqr=" << out_dist_sqr << std::endl;
     };
 
     my_kd_tree_t index1(3 /*dim*/, pc2kd, {10 /* max leaf */});
@@ -125,12 +125,21 @@ void kdtree_demo(const size_t N)
     do_knn_search(index1);
     do_knn_search(index2);
 }
+}  // namespace
 
 int main()
 {
-    // Randomize Seed
-    srand((unsigned int)time(NULL));
-    kdtree_demo<float>(1000000);
-    kdtree_demo<double>(1000000);
-    return 0;
+    try
+    {
+        // Randomize Seed
+        srand((unsigned int)time(NULL));
+        kdtree_demo<float>(1000000);
+        kdtree_demo<double>(1000000);
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << e.what() << "\n";
+        return 1;
+    }
 }
