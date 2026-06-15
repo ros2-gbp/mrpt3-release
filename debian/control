@@ -1,0 +1,12 @@
+Source: ros-lyrical-mrpt-hwdrivers
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, ros-lyrical-mrpt-comms, ros-lyrical-mrpt-maps, ros-lyrical-mrpt-viz, ros-lyrical-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-mrpt-hwdrivers
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-mrpt-comms, ros-lyrical-mrpt-maps, ros-lyrical-mrpt-viz, ros-lyrical-ros-workspace
+Description: The MRPT C++ library mrpt_hwdrivers
