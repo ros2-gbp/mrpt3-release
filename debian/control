@@ -1,0 +1,12 @@
+Source: ros-rolling-mrpt-maps
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, pybind11-dev, python3-dev, ros-rolling-mrpt-graphs, ros-rolling-mrpt-obs, ros-rolling-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-rolling-mrpt-maps
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-mrpt-graphs, ros-rolling-mrpt-obs, ros-rolling-ros-workspace
+Description: The MRPT C++ library mrpt_maps
