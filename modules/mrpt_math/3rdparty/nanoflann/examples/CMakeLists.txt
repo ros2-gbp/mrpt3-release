@@ -5,6 +5,12 @@ macro(DefineExample _NAME)
 	add_executable(${_NAME} ${_NAME}.cpp)
 	set_target_properties(${_NAME} PROPERTIES FOLDER "Examples")
 	target_link_libraries(${_NAME} nanoflann::nanoflann)  # adds the "#include" directory.
+	if(NOT MSVC)
+		target_compile_options(${_NAME} PRIVATE
+			-Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+	else()
+		target_compile_options(${_NAME} PRIVATE /W4)
+	endif()
 endmacro()
 
 DefineExample(dynamic_pointcloud_example)
