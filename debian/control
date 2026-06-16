@@ -1,0 +1,12 @@
+Source: ros-jazzy-mrpt-nav
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, ros-jazzy-mrpt-kinematics, ros-jazzy-mrpt-maps, ros-jazzy-mrpt-viz, ros-jazzy-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-mrpt-nav
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-mrpt-kinematics, ros-jazzy-mrpt-maps, ros-jazzy-mrpt-viz, ros-jazzy-ros-workspace
+Description: The MRPT C++ library mrpt_nav
