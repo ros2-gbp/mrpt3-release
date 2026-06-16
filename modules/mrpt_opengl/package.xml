@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>mrpt_opengl</name>
-  <version>3.0.3</version>
+  <version>3.0.4</version>
   <description>The MRPT C++ library mrpt_opengl</description>
 
   <maintainer email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</maintainer>
@@ -17,7 +17,8 @@
   <depend>mrpt_img</depend>
 
   <build_depend>eigen</build_depend>
-  <build_export_depend>opengl</build_export_depend>
+
+  <depend>opengl</depend> <!-- Use the all-3 depend not to rely on debian sh-libs to actually add opengl libs binaries downstream -->
 
   <export>
     <build_type>cmake</build_type>
