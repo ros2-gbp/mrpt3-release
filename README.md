@@ -1,3 +1,62 @@
+## mrpt3 (kilted) - 3.0.4-1
+
+The packages in the `mrpt3` repository were released into the `kilted` distro by running `/home/jlblanco/code/bloom-venv/bin/bloom-release -y -r kilted mrpt3` on `Tue, 16 Jun 2026 23:47:34 -0000`
+
+These packages were released:
+- `mrpt_apps_cli`
+- `mrpt_apps_gui`
+- `mrpt_bayes`
+- `mrpt_common`
+- `mrpt_comms`
+- `mrpt_config`
+- `mrpt_containers`
+- `mrpt_core`
+- `mrpt_data`
+- `mrpt_examples_cpp`
+- `mrpt_expr`
+- `mrpt_graphs`
+- `mrpt_graphslam`
+- `mrpt_gui`
+- `mrpt_hwdrivers`
+- `mrpt_img`
+- `mrpt_imgui`
+- `mrpt_io`
+- `mrpt_kinematics`
+- `mrpt_libapps_cli`
+- `mrpt_libapps_gui`
+- `mrpt_maps`
+- `mrpt_math`
+- `mrpt_nav`
+- `mrpt_obs`
+- `mrpt_opengl`
+- `mrpt_poses`
+- `mrpt_random`
+- `mrpt_rtti`
+- `mrpt_serialization`
+- `mrpt_slam`
+- `mrpt_system`
+- `mrpt_tfest`
+- `mrpt_topography`
+- `mrpt_typemeta`
+- `mrpt_viz`
+
+Version of package(s) in repository `mrpt3`:
+
+- upstream repository: https://github.com/MRPT/mrpt.git
+- release repository: https://github.com/ros2-gbp/mrpt3-release.git
+- rosdistro version: `3.0.3-1`
+- old version: `3.0.3-1`
+- new version: `3.0.4-1`
+
+Versions of tools used:
+
+- bloom version: `0.14.3`
+- catkin_pkg version: `0.5.2`
+- rosdep version: `0.22.2`
+- rosdistro version: `0.9.0`
+- vcstools version: `0.1.42`
+
+
 ## mrpt3 (jazzy) - 3.0.4-1
 
 The packages in the `mrpt3` repository were released into the `jazzy` distro by running `/home/jlblanco/code/bloom-venv/bin/bloom-release -y -r jazzy mrpt3` on `Tue, 16 Jun 2026 23:11:09 -0000`
