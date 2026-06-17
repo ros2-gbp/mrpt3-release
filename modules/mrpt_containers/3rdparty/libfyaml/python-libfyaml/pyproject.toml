@@ -1,0 +1,66 @@
+[build-system]
+requires = [
+    "setuptools>=69.0",
+    "wheel",
+    # CMake 3.26 is required for Python3_add_library(USE_SABI 3.10), which
+    # configures the Windows build to target the Stable ABI properly
+    # (define Py_LIMITED_API, link against python3.lib, name output *.abi3.pyd).
+    "cmake>=3.26",
+    "ninja; platform_system != 'Windows'",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "libfyaml"
+dynamic = ["version"]
+description = "Python bindings for libfyaml's generic YAML/JSON value model"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Pantelis Antoniou", email = "pantelis.antoniou@konsulko.com"}
+]
+maintainers = [
+    {name = "libfyaml contributors"}
+]
+keywords = ["yaml", "json", "parser", "fast", "performance", "memory-efficient"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: BSD",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Markup",
+]
+
+[project.urls]
+Homepage = "https://github.com/pantoniou/libfyaml"
+Documentation = "https://github.com/pantoniou/libfyaml/tree/master/python-libfyaml"
+Repository = "https://github.com/pantoniou/libfyaml"
+"Bug Reports" = "https://github.com/pantoniou/libfyaml/issues"
+Changelog = "https://github.com/pantoniou/libfyaml/blob/master/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["libfyaml"]
+
+[tool.setuptools.package-data]
+libfyaml = ["*.pyi", "*.so", "*.pyd"]
+
+[tool.cibuildwheel]
+# Stable ABI / abi3 wheels: one wheel built against the lowest supported
+# CPython (3.10) is loadable on every newer interpreter (3.11, 3.12, 3.13, ...).
+build = ["cp310-*"]
+skip = ["*-musllinux_*", "*-win32", "*_i686", "*t-*"]
+build-verbosity = 1
+test-requires = ["pytest"]
+test-command = "pytest --import-mode=importlib {project}/python-libfyaml/tests"
