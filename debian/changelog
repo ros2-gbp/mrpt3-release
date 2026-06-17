@@ -1,0 +1,43 @@
+ros-rolling-mrpt-libapps-gui (3.0.4-1resolute) resolute; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Tue, 16 Jun 2026 22:00:00 -0000
+
+ros-rolling-mrpt-libapps-gui (3.0.3-1resolute) resolute; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Sun, 14 Jun 2026 22:00:00 -0000
+
+ros-rolling-mrpt-libapps-gui (3.0.2-1resolute) resolute; urgency=high
+
+  * Fix: add missing build deps on wxWidgets
+  * Contributors: Jose Luis Blanco-Claraco
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Wed, 10 Jun 2026 22:00:00 -0000
+
+ros-rolling-mrpt-libapps-gui (3.0.1-1resolute) resolute; urgency=high
+
+  * Merge pull request #1363 <https://github.com/MRPT/mrpt/issues/1363> from MRPT/fix/dont-export-eigen3-dep
+    refactor: limit visibility of eigen3 as build dep
+  * refactor: limit visibility of eigen3 as build dep
+  * Contributors: Jose Luis Blanco-Claraco
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Wed, 10 Jun 2026 22:00:00 -0000
+
+ros-rolling-mrpt-libapps-gui (3.0.0-1resolute) resolute; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Fri, 05 Jun 2026 22:00:00 -0000
+
+ros-rolling-mrpt-libapps-gui (2.20.0-1resolute) resolute; urgency=high
+
+  * Last release of the 2.x series. Starting from 3.0.0, changes are tracked
+    in each module's own CHANGELOG.rst file.
+  * Contributors: Jose Luis Blanco-Claraco
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Fri, 05 Jun 2026 22:00:00 -0000
+
+
