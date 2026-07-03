@@ -267,7 +267,8 @@ void CHeightGridMap2D::TInsertionOptions::loadFromConfigFile(
 void CHeightGridMap2D::saveMetricMapRepresentationToFile(const std::string& filNamePrefix) const
 {
   // Text matrix:
-  saveToTextFile(filNamePrefix + std::string("_mean.txt"));
+  const bool ret = saveToTextFile(filNamePrefix + std::string("_mean.txt"));
+  ASSERT_(ret);
 }
 
 void CHeightGridMap2D::getVisualizationInto(mrpt::viz::CSetOfObjects& o) const
@@ -409,3 +410,10 @@ float CHeightGridMap2D::compute3DMatchingRatio(
 }
 
 CHeightGridMap2D::TMapRepresentation CHeightGridMap2D::getMapType() { return m_mapType; }
+
+std::map<std::string, mrpt::config::CLoadableOptions*> CHeightGridMap2D::optionsByName()
+{
+  return {
+      {"insertionOptions", &insertionOptions},
+  };
+}
