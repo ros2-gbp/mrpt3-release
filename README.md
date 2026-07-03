@@ -53,7 +53,7 @@ while preserving the data structures and algorithms at the core of MRPT.
 ### Install from ROS repositories
 
 ```bash
-# ROS 1
+# ROS 1 (deprecated)
 sudo apt install ros-$ROS_DISTRO-mrpt2
 
 # ROS 2
@@ -125,6 +125,21 @@ sudo apt install libmrpt-dev mrpt-apps
 
 ```bash
 git clone https://github.com/MRPT/mrpt.git --recursive
+```
+
+Install build dependencies with `rosdep` (recommended, works even without ROS installed):
+
+```bash
+sudo apt install python3-rosdep
+sudo rosdep init   # only once per machine
+rosdep update
+rosdep install --from-paths . --ignore-src -r -y
+```
+
+Then build with `colcon`:
+
+```bash
+colcon build
 ```
 
 See the full [build guide](https://docs.mrpt.org/reference/latest/compiling.html) for colcon, CMake options, and dependency setup.
