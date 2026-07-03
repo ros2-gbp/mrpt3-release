@@ -1,0 +1,12 @@
+Source: ros-humble-mrpt-examples-cpp
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libglfw3-dev, ros-humble-mrpt-common, ros-humble-mrpt-data, ros-humble-mrpt-graphslam, ros-humble-mrpt-gui, ros-humble-mrpt-imgui, ros-humble-mrpt-libapps-cli, ros-humble-mrpt-libapps-gui, ros-humble-mrpt-nav, ros-humble-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-humble-mrpt-examples-cpp
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-humble-mrpt-common, ros-humble-mrpt-data, ros-humble-mrpt-graphslam, ros-humble-mrpt-gui, ros-humble-mrpt-imgui, ros-humble-mrpt-libapps-cli, ros-humble-mrpt-libapps-gui, ros-humble-mrpt-nav, ros-humble-ros-workspace
+Description: C++ examples demonstrating MRPT functionality
