@@ -1,0 +1,12 @@
+Source: ros-humble-mrpt-hwdrivers
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libavcodec-dev, libavdevice-dev, libavfilter-dev, libavformat-dev, libavutil-dev, libdc1394-dev, libopenni2-dev, libpcap0.8-dev, libpostproc-dev, libswresample-dev, libswscale-dev, libusb-1.0-0-dev, ros-humble-mrpt-comms, ros-humble-mrpt-maps, ros-humble-mrpt-viz, ros-humble-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-humble-mrpt-hwdrivers
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-humble-mrpt-comms, ros-humble-mrpt-maps, ros-humble-mrpt-viz, ros-humble-ros-workspace
+Description: The MRPT C++ library mrpt_hwdrivers
