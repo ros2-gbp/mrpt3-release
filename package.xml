@@ -5,7 +5,7 @@
 -->
 <package format="3">
   <name>mrpt_math</name>
-  <version>3.0.4</version>
+  <version>3.1.0</version>
   <description>The MRPT C++ library mrpt_math</description>
 
   <maintainer email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</maintainer>
@@ -26,6 +26,8 @@
   <build_depend>eigen</build_depend>
   <build_depend>pybind11-dev</build_depend>
   <build_depend>python3-dev</build_depend>
+  <!-- kd-trees: system version preferred, embedded copy as fallback -->
+  <build_depend>libnanoflann-dev</build_depend>
 
 
   <export>
