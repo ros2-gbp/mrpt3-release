@@ -2,6 +2,9 @@
 Changelog for package mrpt_system
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.1.1 (2026-07-04)
+------------------
+
 3.1.0 (2026-07-03)
 ------------------
 * Merge pull request `#1376 <https://github.com/MRPT/mrpt/issues/1376>`_ from MRPT/port/2x-fixes-jul2026
