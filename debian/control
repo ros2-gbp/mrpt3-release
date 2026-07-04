@@ -1,0 +1,12 @@
+Source: ros-jazzy-mrpt-slam
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, pybind11-dev, python3-dev, python3-numpy <!nocheck>, ros-jazzy-mrpt-maps, ros-jazzy-mrpt-topography, ros-jazzy-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-mrpt-slam
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-mrpt-maps, ros-jazzy-mrpt-topography, ros-jazzy-ros-workspace
+Description: The MRPT C++ library mrpt_slam
