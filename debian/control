@@ -1,0 +1,12 @@
+Source: ros-lyrical-mrpt-apps-gui
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, ros-lyrical-mrpt-common, ros-lyrical-mrpt-graphslam, ros-lyrical-mrpt-kinematics, ros-lyrical-mrpt-libapps-gui, ros-lyrical-mrpt-nav, ros-lyrical-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-mrpt-apps-gui
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-mrpt-common, ros-lyrical-mrpt-graphslam, ros-lyrical-mrpt-kinematics, ros-lyrical-mrpt-libapps-gui, ros-lyrical-mrpt-nav, ros-lyrical-ros-workspace
+Description: MRPT graphical user interface applications
