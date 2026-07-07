@@ -1,0 +1,12 @@
+Source: ros-humble-mrpt-img
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, libglfw3-dev, pybind11-dev, python3-dev, ros-humble-mrpt-common, ros-humble-mrpt-config, ros-humble-mrpt-io, ros-humble-mrpt-math, ros-humble-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-humble-mrpt-img
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-humble-mrpt-common, ros-humble-mrpt-config, ros-humble-mrpt-io, ros-humble-mrpt-math, ros-humble-ros-workspace
+Description: The MRPT C++ library mrpt_img
