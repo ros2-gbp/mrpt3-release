@@ -1,0 +1,12 @@
+Source: ros-rolling-mrpt-examples-cpp
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libglfw3-dev, ros-rolling-mrpt-common, ros-rolling-mrpt-data, ros-rolling-mrpt-graphslam, ros-rolling-mrpt-gui, ros-rolling-mrpt-imgui, ros-rolling-mrpt-libapps-cli, ros-rolling-mrpt-libapps-gui, ros-rolling-mrpt-nav, ros-rolling-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-rolling-mrpt-examples-cpp
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-mrpt-common, ros-rolling-mrpt-data, ros-rolling-mrpt-graphslam, ros-rolling-mrpt-gui, ros-rolling-mrpt-imgui, ros-rolling-mrpt-libapps-cli, ros-rolling-mrpt-libapps-gui, ros-rolling-mrpt-nav, ros-rolling-ros-workspace
+Description: C++ examples demonstrating MRPT functionality
