@@ -1,0 +1,12 @@
+Source: ros-rolling-mrpt-random
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, pybind11-dev, python3-dev, ros-rolling-mrpt-common, ros-rolling-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-rolling-mrpt-random
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-mrpt-common, ros-rolling-ros-workspace
+Description: The MRPT C++ library mrpt_random
