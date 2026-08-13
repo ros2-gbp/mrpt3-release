@@ -66,22 +66,30 @@ set(LIB_UNIT_TEST_SOURCES
   tests/CLogOddsGridMapLUT_unittest.cpp
   tests/CMultiMetricMap_unittest.cpp
   tests/CObservation3DRangeScan_unittest.cpp
+  tests/CObservationPointCloud_unittest.cpp
   tests/CObservationRotatingScan_unittest.cpp
   tests/COccupancyGridMap2D_unittest.cpp
   tests/COccupancyGridMap2D_serialization_unittest.cpp
+  tests/COccupancyGridMap2D_getAs_unittest.cpp
+  tests/COccupancyGridMap2D_io_unittest.cpp
   tests/COccupancyGridMap2D_simulate_unittest.cpp
   tests/COccupancyGridMap2D_likelihood_unittest.cpp
   tests/COccupancyGridMap2D_matching_unittest.cpp
   tests/COccupancyGridMap3D_unittest.cpp
   tests/COctoMap_unittest.cpp
+  tests/CColouredOctoMap_unittest.cpp
   tests/CPointCloudFilterByDistance_unittest.cpp
   tests/CGenericPointsMap_unittest.cpp
   tests/CPointsMap_unittest.cpp
+  tests/CRandomFieldGridMap2D_unittest.cpp
   tests/CRandomFieldGridMap3D_unittest.cpp
   tests/serializations_unittest.cpp
   tests/CBeaconMap_unittest.cpp
   tests/CVoxelMap_unittest.cpp
   tests/CReflectivityGridMap2D_unittest.cpp
+  tests/CWirelessPowerGridMap2D_unittest.cpp
+  tests/customizable_obs_viz_unittest.cpp
+  tests/CPlanarLaserScan_unittest.cpp
 )
 
 set(LIB_PUBLIC_HEADERS
