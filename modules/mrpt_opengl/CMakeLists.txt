@@ -51,6 +51,9 @@ set(LIB_SOURCES
 
 set(LIB_UNIT_TEST_SOURCES
   tests/CFBORender_unittest.cpp
+  tests/CFBORender_SolidPrimitives_unittest.cpp
+  tests/CFBORender_LinePointPrimitives_unittest.cpp
+  tests/CFBORender_ExtraEllipsoidsAndMesh_unittest.cpp
   tests/TRenderMatrices_unittest.cpp
 )
 
