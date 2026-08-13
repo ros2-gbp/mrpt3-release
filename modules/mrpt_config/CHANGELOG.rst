@@ -2,6 +2,12 @@
 Changelog for package mrpt_config
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.1.3 (2026-08-12)
+------------------
+* mrpt_config: increase code coverage and fix bugs.
+  Add unit tests for config and options classes. Fix cosmetic padding bug in CConfigFileBase::writeString().
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.2 (2026-07-07)
 ------------------
 
