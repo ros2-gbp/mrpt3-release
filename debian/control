@@ -1,0 +1,12 @@
+Source: ros-lyrical-mrpt-examples-cpp
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libglfw3-dev, ros-lyrical-mrpt-common, ros-lyrical-mrpt-data, ros-lyrical-mrpt-graphslam, ros-lyrical-mrpt-gui, ros-lyrical-mrpt-imgui, ros-lyrical-mrpt-libapps-cli, ros-lyrical-mrpt-libapps-gui, ros-lyrical-mrpt-nav, ros-lyrical-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-mrpt-examples-cpp
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-mrpt-common, ros-lyrical-mrpt-data, ros-lyrical-mrpt-graphslam, ros-lyrical-mrpt-gui, ros-lyrical-mrpt-imgui, ros-lyrical-mrpt-libapps-cli, ros-lyrical-mrpt-libapps-gui, ros-lyrical-mrpt-nav, ros-lyrical-ros-workspace
+Description: C++ examples demonstrating MRPT functionality
