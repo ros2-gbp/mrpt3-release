@@ -175,7 +175,28 @@ Full procedure: `doc/source/make_a_mrpt_release.rst`. Quick summary:
 * Do not run `packaging/release.py` or any step that pushes/tags/publishes
   unless the user explicitly asks for an actual release to be cut.
 
-## 9. Code Coverage Status (baseline: 2026-07-03, refreshed 2026-07-06)
+## 9. ROS build farm "dev" jobs skip tests (2026-07-10)
+
+ROS "*dev" buildfarm Jenkins jobs (e.g. `Kdev__mrpt3__ubuntu_noble_amd64`) run
+`colcon build -DBUILD_TESTING=0` once, then a **second, fully clean**
+`colcon build --cmake-clean-cache -DBUILD_TESTING=1` pass that also compiles
+every module's gtest binaries. This doubles build time and was observed to
+blow the 120-minute Jenkins timeout mid-way through the second pass, before
+`colcon test` was ever invoked (no test results were produced at all). The
+same test suite already runs on every push/PR via GitHub Actions CI
+(`.github/workflows/build-linux.yml`), which never sources a ROS environment.
+
+Fix: `modules/mrpt_common/cmake/mrpt_cmake_functions.cmake` now forces
+`BUILD_TESTING` back to `OFF` (overriding the buildfarm's explicit
+`-DBUILD_TESTING=1`) whenever both `ROS_DISTRO` (sourced ROS env) and
+`JENKINS_URL` (any Jenkins job) are set in the environment — i.e. only on the
+ROS build farm itself, not for a developer who merely has ROS sourced
+locally. Escape hatch: `-DMRPT_FORCE_TESTS_ON_ROS_BUILDFARM=ON` re-enables
+tests there if ever needed. Since both `mrpt_add_test()` and
+`mrpt_add_python_binding_test()` already gate on `BUILD_TESTING`, no other
+files needed changes.
+
+## 10. Code Coverage Status (baseline: 2026-07-03, refreshed 2026-07-06)
 
 A full rebuild of all 33 `modules/*` packages was done with coverage
 instrumentation, followed by a full `colcon test` run (all tests passed) and a
@@ -198,8 +219,8 @@ colcon build --base-paths modules --cmake-args -DENABLE_COVERAGE=ON -DBUILD_TEST
 colcon test --base-paths modules
 gcovr --root . -j$(nproc) --gcov-ignore-parse-errors=all \
   --exclude-unreachable-branches --exclude-throw-branches \
-  --exclude '.*/3rdparty/.*' --exclude '.*/tests/.*' --exclude '.*_unittest\.cpp' \
-  --exclude '.*/python_bindings/.*' --exclude '.*/samples/.*' \
+  --exclude '.*/3rdparty/.*' --exclude '.*/stb/.*' --exclude '.*/tests/.*' \
+  --exclude '.*_unittest\.cpp' --exclude '.*/python_bindings/.*' --exclude '.*/samples/.*' \
   --json-pretty -o coverage.json build
 ```
 (`--gcov-ignore-parse-errors=all` is needed, not just `negative_hits.warn_once_per_file`:
@@ -215,6 +236,32 @@ per-file/per-module percentages, or numbers will be wrong in both directions.
 `scripts/coverage_module_report.py coverage.json <module1> [<module2> ...]`
 does this dedupe and prints per-file + aggregate line/branch % for the given
 module(s), e.g. `scripts/coverage_module_report.py coverage.json mrpt_math`.
+
+Gotcha (2026-07-09): re-running a coverage-instrumented test binary directly
+(not via `colcon test`) without deleting old `.gcda` files first causes
+`libgcov profiling error: ... overwriting an existing profile data with a
+different checksum` — safe to ignore for pass/fail, but before trusting a
+`gcovr` report, `find build -iname '*.gcda' -delete` and re-run `colcon test`
+once to get a clean, single-run coverage capture.
+
+Gotcha (2026-07-09): `mrpt_math` only explicitly instantiates fixed-size
+matrices/vectors for a handful of dimensions (square `CMatrixFixed`: 2,3,4,6,
+7,12; `CVectorFixed`: 2,3,4,5,6,7,12 — see
+`mrpt_math/src/MatrixVectorBase_instantiate_{CMatrixFixed,CVectorFixed}.cpp`).
+Writing a test that instantiates a template (e.g. `CKalmanFilterCapable<...>`)
+with a size outside that list, such as `VEH_SIZE=1`, compiles but fails to
+*link* (`undefined reference to MatrixVectorBase<...>::impl_op_...`). Pick a
+supported size (2 is the smallest) for any new fixed-size-matrix-based test.
+
+Gotcha (2026-08-02): with `gcovr` 8.6 (vs. whatever earlier version this
+baseline was first taken with), the reproduce command above can now abort
+mid-run with `GcovrMergeAssertionError: ... Got function
+mrpt::containers::yaml_ref::operator=(double) on multiple lines: 1036, 1042`
+(a header-only template function reported at two different line numbers by
+different `.gcda` files, e.g. one from `mrpt_opengl`'s and one from
+`mrpt_img`'s object files). Add `--merge-mode-functions=merge-use-line-min`
+to the `gcovr` invocation to resolve the ambiguity instead of failing the
+whole run.
 
 ### Measuring a single module's coverage after changing it
 
@@ -245,13 +292,8 @@ and accurate path — pick two.
 | mrpt_gui | 22/4621 | 0.5% | 0.2% |
 | mrpt_hwdrivers | 913/6592 | 13.9% | 9.7% |
 | mrpt_comms | 237/1013 | 23.4% | 11.2% |
-| mrpt_viz | 2660/9024 | 29.5% | 17.3% |
 | mrpt_kinematics | 184/482 | 38.2% | 17.9% |
-| mrpt_img | 4132/10271 | 40.2%† | 30.0% |
 | mrpt_graphslam | 257/611 | 42.1% | 37.3% |
-| mrpt_obs | 2922/6723 | 43.5% | 26.3% |
-| mrpt_topography | 172/364 | 47.3% | 27.9% |
-| mrpt_maps | 5605/11648 | 48.1% | 32.7% |
 | mrpt_opengl | 2035/4234 | 48.1% | 30.1% |
 | mrpt_system | 1012/1900 | 53.3% | 39.6% |
 | mrpt_io | 726/1292 | 56.2% | 39.9% |
@@ -259,23 +301,255 @@ and accurate path — pick two.
 | mrpt_libapps_gui | 952/1567 | 60.8% | 42.6% |
 | mrpt_nav | 3928/6234 | 63.0% | 45.3% |
 | mrpt_slam | 2778/4299 | 64.6% | 43.7% |
+| mrpt_viz (2026-08-02) | 6449/9426 | 68.4% | 50.1% |
 | mrpt_rtti | 126/176 | 71.6% | 73.5% |
 | mrpt_serialization | 511/708 | 72.2% | 52.5% |
-| mrpt_bayes | 805/1052 | 76.5% | 55.2% |
-| mrpt_config | 445/551 | 80.8% | 65.1% |
-| mrpt_containers | 1639/1956 | 83.8% | 55.6% |
+| mrpt_maps (2026-08-03)§ | 10127/11696 | 86.6% | 62.5% |
 | mrpt_math (2026-07-05) | 6914/8070 | 85.7% | 57.5% |
 | mrpt_core | 541/628 | 86.1% | 64.8% |
+| mrpt_obs (2026-07-10) | 4631/5324 | 87.0% | 56.1% |
+| mrpt_img (2026-07-10)† | 2255/2495 | 90.4% | 69.2% |
 | mrpt_graphs (2026-07-06) | 1022/1111 | 92.0% | 76.7% |
 | mrpt_poses | 6263/6787 | 92.3% | 59.8% |
+| mrpt_containers (2026-07-11) | 1146/1234 | 92.9% | 48.2%‡ |
 | mrpt_expr | 93/100 | 93.0% | 60.2% |
 | mrpt_random | 160/167 | 95.8% | 85.1% |
+| mrpt_bayes (2026-07-09) | 1036/1078 | 96.1% | 77.4% |
+| mrpt_config (2026-07-09) | 531/548 | 96.9% | 82.3% |
 | mrpt_tfest (2026-07-07) | 633/652 | 97.1% | 73.3% |
+| mrpt_topography (2026-07-10) | 373/375 | 99.5% | 91.2% |
 | mrpt_typemeta | 57/57 | 100.0% | 85.1% |
 
-† `mrpt_img` includes the vendored `src/stb/*.h` (stb_image/stb_image_resize2/
-stb_image_write, public-domain third-party). Excluding those, first-party
-`mrpt_img` coverage is 48.0%. Treat `src/stb/*` as out of scope for new tests.
+† `mrpt_img` vendors third-party `src/stb/*.h` (stb_image/stb_image_resize2/
+stb_image_write, public-domain), which is out of scope for tests like any
+other 3rd-party code and is excluded via `--exclude '.*/stb/.*'`, now part of
+the standard reproduce command above (previously a module-scoped, one-off
+filter just for this row). The 2026-07-10 pass also fixed
+several bugs found via new tests: a bilinear-interpolation weight collapse and
+an off-by-one edge read in `CMappedImage::getPixel`, a hue wrap-around sign
+error in `rgb2hsv()`, a missing distortion-model assignment in one
+`camera_geometry::undistort_points()` overload (silently a no-op), a
+division-by-zero-to-NaN risk in `CImage::cross_correlation_FFT()`, an
+unchecked negative-window read in `CImage::KLT_response()`, a
+`saveToFile()`/doc mismatch (threw instead of returning false for unknown
+extensions), a missing endpoint pixel in `CCanvas::line()`, and a missing
+implementation of `CImage::saveToStreamAsJPEG()` (declared but never defined,
+a link error for any caller). The `CImage.SSE2.cpp`/`CImage.SSSE3.cpp` SIMD
+kernels are dead code as of the stb-based rewrite (no longer called from
+`CImage.cpp`); they are covered by direct unit tests instead, which also
+found and fixed a decimation remainder-loop bug and a swapped R/B luminance
+weight.
+
+‡ `mrpt_containers` line and branch % both come from
+`scripts/coverage_module_report.py` (max hit-count per line, OR-merged
+`(line_number, branch_index)` for branches, across duplicate
+template-instantiation entries, e.g. `CDynamicGrid<double>` vs
+`CDynamicGrid<int>` both mapping to the same header lines); raw un-deduped
+`gcovr` CLI output for this module reads ~87% lines / ~45% branches instead.
+This module-scoped run (not the whole-repo `colcon test`) is
+adequate here since `mrpt_containers`' templated headers (`CDynamicGrid`,
+`circular_buffer`, `ts_hash_map`, `deepcopy_ptr`) are almost entirely exercised
+by this module's own tests, unlike `mrpt_math`'s matrix templates. New tests
+added on 2026-07-11 also fixed two test-only misunderstandings (not source
+bugs) around `yaml`'s null-node vs. null-scalar distinction: `operator[]`
+throws for a null node only via the *const* overload (the non-const overload
+auto-vivifies into a map), and a scalar node holding `std::monostate` (e.g.
+parsed from YAML `null`) is *also* `isNullNode() == true`, which is why
+`node_t::typeName()`'s scalar-visitor branch for `std::monostate` (yaml.cpp)
+is unreachable dead code — `isNullNode()` intercepts first. The `shared_ptr<yaml>`
+alternative in `scalar_t` remains unreachable via the public API (no
+construction call sites), same as noted before; left in place as it is part of
+the variant's public type and removing it would be an ABI-affecting change.
+
+§ `mrpt_maps` was raised from 48.1%/32.7% (2026-07-03 baseline) to 83.0%/59.6%
+on 2026-07-17, in two passes. Pass 1 (74.5%/53.9%) added new/extended tests
+for `CRandomFieldGridMap2D` (35%→86%, all 5 map-type representations),
+`CPointsMap` (51%→80%), `CGasConcentrationGridMap2D` (13%→84%, incl. the
+wind-advection simulation path), `CBeaconMap`/`CBeacon` (76%→93% / new),
+`COccupancyGridMap2D_insert.cpp` (30%→92%), the Voronoi/critical-points code,
+`CObservationPointCloud` (new), and `customizable_obs_viz.cpp` (0%→97%).
+Pass 2 (83.0%/59.6%) covered the remaining gaps: `COctoMap`/`CColouredOctoMap`
+(21%/15%→76%/95%, incl. the shared `COctoMapBase` template — insertion for
+2D/3D scans, `castRay`, `getPointOccupancy`, colour update via
+`SET`/`AVERAGE`/`INTEGRATE`), `CVoxelMap`/`CVoxelMapRGB`/`CVoxelMapOccupancyBase`
+(27%/22%/33%→85%/77%/94%, incl. `remove_voxels_farther_than` and the
+range-image-based colour-scan path), `COccupancyGridMap3D` (51%→82%, incl.
+the `TInsertionOptions`/`TRenderingOptions` structs and the `determineMatching2D`/
+`compute3DMatchingRatio`/`internal_computeObservationLikelihood` stubs — see
+below), `CMultiMetricMap` (75%→90%, `determineMatching2D`, `getAsSimplePointsMap`,
+`mapByIndex`, serialization), and a new `CPlanarLaserScan` test file (0%→96%).
+Real bugs found and fixed along the way: (1) `CGasConcentrationGridMap2D::
+getWindAs3DObject()` and `::simulateAdvection()` both dereferenced
+`CDynamicGrid::cellByPos/cellByIndex()`'s result unchecked, segfaulting
+whenever a wind-grid query point/index fell outside the grid (a boundary
+point at exactly the grid edge, or index drift when the main grid resizes
+but the wind sub-grids don't); (2) `simulateAdvection()`'s variance-update
+loop treated the *compressed* `m_stackedCov` (N rows × small W-window
+columns) as if it were a full N×N matrix, writing out-of-bounds columns and
+corrupting the heap (`double free or corruption`) on any grid larger than
+the window; (3) `TInsertionOptions::loadFromConfigFile()` marked
+`gasSensorLabel`/`gasSensorType`/`windSensorLabel`/`useWindInformation`/
+`advectionFreq` all `failIfNotFound=true` despite each having a documented
+default (making the defaults dead code and any config file missing one of
+these keys throw), and separately passed the string literal `"false"` where
+`read_bool()` expects an actual `bool` default (a non-null pointer coerces
+to `true`, silently inverting the intended default); (4)
+`COccupancyGridMap2D::findCriticalPoints()` computed `temp_x.size() - 1`
+with unsigned `size_t` arithmetic, underflowing to `SIZE_MAX` and reading
+wildly out of bounds whenever zero or one critical-point candidates were
+found (the common case for any corridor/room without branch points — i.e.
+most maps); (5) `COccupancyGridMap2D::getVoronoiClearance()` dereferenced
+`cellByIndex()`'s result unchecked, segfaulting for any negative or
+out-of-range `(cx,cy)`, reachable from `findCriticalPoints()`'s
+`x-2`/`y-2` neighbor scan. `determineMatching2D()`'s bounding-box overlap
+pre-filter (not expanded by `maxDistForCorrespondence`/
+`maxAngularDistForCorrespondence`) can also incorrectly early-reject valid
+correspondences when the two maps' raw bounding boxes don't quite touch;
+identified but *not* fixed (a hot, SIMD-optimized path used throughout
+ICP/SLAM, too risky to patch without dedicated validation) — the affected
+test was reshaped to avoid the case instead. Separately, MRPT's PLY point
+cloud writer (`mrpt::viz::PLY_import_export.cpp`) only round-trips a single
+grayscale "intensity" property (`(R+G+B)/3`, broadcast back to all three
+channels on import), not full per-channel RGB — not a bug, just a
+narrower-than-expected feature scope that a new test initially assumed
+incorrectly. `COccupancyGridMap3D::determineMatching2D()`,
+`::compute3DMatchingRatio()`, and `::internal_computeObservationLikelihood()`
+are all unimplemented stubs (`THROW_EXCEPTION("Implement me!")`, pre-existing,
+self-documented) — new tests assert the current (throwing) behavior rather
+than a working implementation; actually implementing them is a real
+algorithmic task, not a bug fix, and was left for a dedicated session.
+`CVoxelMapRGB`'s 3D-scan colour path and `CColouredOctoMap`'s 3D-scan path
+both unproject via a range image + camera intrinsics (`hasRangeImage`), NOT
+via `hasPoints3D`/`points3D_x/y/z` like most other 3D-scan consumers in this
+module — a manually-constructed `CObservation3DRangeScan` for tests needs
+`cameraParams.setIntrinsicParamsFromValues(...)` plus a filled `rangeImage`
+matrix, or `unprojectInto()` silently yields zero points. A parallel 8-agent
+test-writing fleet was used for the first half of this session; all 8 hit
+the account's session usage limit mid-task, but each agent's already-applied
+file edits survived intact (edits are atomic) — after registering the
+surviving new files and fixing the crashes/config bugs above, a second,
+solo pass covered the remaining gaps the fleet never reached
+(`CColouredOctoMap`, `COctoMap`, `CVoxelMap`/`CVoxelMapRGB`/
+`CVoxelMapOccupancyBase`, `COccupancyGridMap3D`, `CMultiMetricMap` extra
+coverage, and a new `CPlanarLaserScan` test file).
+
+`mrpt_maps` was further raised from 83.0%/59.6% to 86.6%/62.5% on 2026-08-03
+(pass 3), targeting the lowest-coverage files remaining after pass 2:
+`COccupancyGridMap2D_getAs.cpp` (49%→96%, all `TGetAsImageParams` combinations,
+`getAsImageFiltered()`'s gaussian/median filter branches, `getVisualizationInto()`
+enabled/disabled, `getAsPointCloud()` border-cell selection), `_io.cpp`
+(55%→93%, bitmap save/load round-trip, `loadFromBitmap()`'s centered-origin
+sentinel, `saveAsBitmapTwoMapsWithCorrespondences()`,
+`saveMetricMapRepresentationToFile()`, and the ROS map-server YAML `scale`/
+`negate`/missing-image/invalid-`mode` branches, using new fixture files
+`yaml_32_{scale,negate,badmode,missing_image}.yaml`), `_simulate.cpp`
+(53%→100%, out-of-range/short-max-range rays, noisy rays,
+`laserScanSimulator()` decimation, `laserScanSimulatorWithUncertainty()` for
+both `sumUnscented`/`sumMonteCarlo` and its unknown-method throw path),
+`_likelihood.cpp` (80%→90%, a parameterized test now drives all 7
+`TLikelihoodMethod` values through the real public dispatch instead of only
+`lmLikelihoodField_Thrun`/`_II`), `COctoMap.cpp` (75%→94%, all 7
+`COctoMapVoxels::visualization_mode_t` coloring branches plus
+`generateGridLines` and the const `getMetricSize/Min/Max` overloads),
+`CVoxelMapRGB.cpp` (76%→91%, serialization round-trip,
+`remove_voxels_farther_than`, the `ray_trace_free_space` toggle, an empty-3D-scan
+early return), `CRandomFieldGridMap3D.cpp` (79%→92%, `TInsertionOptions`
+load/dump, `saveAsCSV()` with both mean+stddev files and its failure path,
+serialization round-trip, `insertIndividualReading(..., update_map=true)`),
+and `CPointsMap_crtp_common.h` (68%→97%, the `CObservation3DRangeScan`
+overload of `loadFromRangeScan()` — `insertInvalidPoints` and the
+no-points-3D early return — which no test in the module exercised at all
+before this pass). A parallel 5-agent test-writing fleet was used for the
+first half of this pass; all 5 hit the account's session usage limit
+mid-task (same failure mode as the 8-agent fleet in pass 2), but each
+agent's already-applied file edits survived intact — a solo pass then fixed
+the resulting test failures and covered the remaining gaps (`_io.cpp`,
+`COctoMap.cpp`'s coloring-mode variants, `CRandomFieldGridMap3D.cpp`,
+`CPointsMap_crtp_common.h`'s 3D-scan overload, and a small voronoi
+three-way-junction/isolated-obstacle addition). Two new `_unittest.cpp`
+files (`COccupancyGridMap2D_getAs_unittest.cpp`, `_io_unittest.cpp`) had to
+be added by hand to `mrpt_maps/CMakeLists.txt`'s explicit
+`LIB_UNIT_TEST_SOURCES` list — unlike some other modules, this list is not
+glob-based, so a new `*_unittest.cpp` file silently never runs (and never
+moves the coverage numbers) until it's registered there. Real bugs found
+and fixed along the way: (1) `CDynamicGrid3D::dyngridcommon_readFromStream()`
+(`mrpt_containers`, used by `CRandomFieldGridMap3D` and `CLogOddsGridMap3D`)
+updated `m_size_x`/`m_size_y`/`m_size_z` from the stream but never recomputed
+the cached `m_size_x_times_y` z-axis stride, so deserializing into an object
+whose grid dimensions differ from what it had before (e.g. any freshly
+default-constructed object) left cell-index lookups using a stale stride,
+silently reading out-of-bounds heap memory instead of the intended cell — a
+memory-safety bug, not just wrong data; (2)
+`COccupancyGridMap2D::computeObservationLikelihood_ConsensusOWA()` had its
+"is this a `CObservation2DRangeScan`?" branch condition inverted
+(`if (IS_CLASS(...))` instead of `if (!IS_CLASS(...))`), so the method
+returned a constant `1e-3` fallback for its only supported observation type
+and fell through to an unconditional `dynamic_cast`-triggered `bad_cast` for
+every other type — `lmConsensusOWA` was completely non-functional before this
+fix; (3) `TLaserSimulUncertaintyParams::method`'s doc comment claimed the
+default was `sumMonteCarlo` while the member initializer actually defaults to
+`sumUnscented` (doc-only fix). `computeObservationLikelihood_ConsensusOWA()`
+also has two more `ASSERT_`-guarded preconditions that are easy to trip by
+accident rather than fix (a hot likelihood-evaluation path, same "too risky
+to patch without dedicated validation" reasoning as `determineMatching2D`
+above): `OWA_weights.size()` must not exceed the scan's point count (default
+is 100 weights), and every scan point, when re-projected from whatever pose
+is being evaluated, must land within the grid bounds or a `nCells > 0` assert
+fires — the affected tests use a generously oversized grid and a smaller
+`OWA_weights` vector to stay clear of both, rather than patching the source.
+
+`mrpt_viz` was raised from 29.5%/17.3% (2026-07-03 baseline) to 68.4%/50.1% on
+2026-08-02. `mrpt_viz` has zero OpenGL dependency (it's the abstract scene-graph
+description consumed by `mrpt_opengl`, not the other way round), so almost all
+of the gain came from new, direct, non-rendering unit tests added under
+`modules/mrpt_viz/tests/`: `CPolyhedron_unittest.cpp` (the session's single
+biggest target, `CPolyhedron.cpp` going from a large uncovered file to
+91.6%/82.8%, exercising every `Create*` platonic/Archimedean/Catalan/Johnson
+solid factory plus `getDual`/`truncate`/`cantellate`/`augment`/`rotate`/`scale`),
+`PLY_import_export_unittest.cpp`, `COrbitCameraController_unittest.cpp`,
+`Scene_Viewport_unittest.cpp`, `CVisualObject_unittest.cpp` (base class +
+the four `VisualObjectParams_*` mixins), `CGeneralizedEllipsoid_unittest.cpp`
+(the `CEllipsoid2D/3D`, `InverseDepth2D/3D`, `RangeBearing2D` family),
+`pose_pdfs_unittest.cpp`, `StockObjects_unittest.cpp`, and
+`MiscVisualObjects_unittest.cpp` (`CAxis`, `CVectorField2D/3D`, `CFrustum`,
+`CSetOfObjects`, `CCamera`, `TTriangle`, `COctoMapVoxels`, `CSkyBox`, `CDisk`,
+`CBox`, `CGridPlaneXY/XZ`, `CTexturedPlane`). A smaller share came from
+extending the `mrpt_opengl` reference-image suite with
+`CFBORender_ExtraEllipsoidsAndMesh_unittest.cpp` (the inverse-depth/
+range-bearing ellipsoid parameterizations, `CGridPlaneXZ`, `CMesh3D`), the
+same offscreen-render/PNG-diff technique as the pre-existing `CFBORender_*`
+tests — that file has to live under `mrpt_opengl/tests/` rather than
+`mrpt_viz/tests/` given the one-way dependency, but the coverage it generates
+is still credited to `mrpt_viz`'s `.gcda` files since coverage instrumentation
+is per-compiled-object, not per-test-binary. Real bugs found and fixed along
+the way: (1) `CPolyhedron::InitFromVertAndFaces()` never assigned
+`m_Vertices`/`m_Faces` from its parameters, only from whatever the member
+variables already held — harmless for the two constructors that pre-populate
+those members via their initializer list before calling it, but the
+`CPolyhedron(vertices, vector<vector<uint32_t>> faces)` convenience
+constructor left them empty, silently producing a 0-vertex/0-face polyhedron;
+(2) `PLY_Importer::loadFromPlyFile()` segfaulted (null-pointer dereference in
+`ply_close()`) instead of returning `false` for a nonexistent/unreadable
+file, since `ply_open_for_reading()` returning `nullptr` on `fopen()` failure
+was never checked; (3) `CMesh3D::loadMesh()`'s (raw-pointer overload)
+triangle face-normal computation read vertex index slot `[3]`, which for a
+triangle (as opposed to a quad) is the unused `-1` sentinel cast to
+`uint32_t` (`4294967295`), producing an out-of-bounds `std::vector` read and
+a segfault for any mesh with `enableFaceNormals(true)` and at least one
+triangle face — a `CMesh3D::loadMesh(is_quad, face_verts, vert_coords)`
+matrix-based overload right below it had the equivalent code correct, which
+is what gave away the right fix. Also fixed: the `CreateJohnsonSolidWithConstantBase()`
+API-doc example table in `CPolyhedron.h` listed `"C+PRC-"` for an 8-vertex
+rhombicuboctahedron, but the parser requires the downward-cupola component
+(`C-`) first and the upward one (`C+`) last (confirmed against
+`CreateRandomPolyhedron()`'s own internal usage) — the doc string was
+backwards and has been corrected to `"C-PRC+"`. Remaining gaps below ~55%:
+`CAnimatedAssimpModel.cpp`/`CAssimpModel.cpp` (0%, need an external 3D model
+file plus system assimp — not attempted), `CTextMessageCapable.cpp` (0%,
+on-screen text-overlay list, unexercised by any offscreen-render or unit
+test), `opengl_fonts.h` (0%, embedded glyph bitmap data), and
+`CSetOfTexturedTriangles.cpp` (2.1%, needs a rendering-based test since its
+logic is mostly buffer-upload bookkeping).
 
 ### Weak areas, grouped by root cause
 
@@ -301,25 +575,36 @@ stb_image_write, public-domain third-party). Excluding those, first-party
 4. **Quick wins — pure-logic files at 0% with no hardware/GUI dependency**
    (highest-value gaps, ordinary unit tests would work immediately):
    `mrpt_system/src/md5.cpp`, `mrpt_graphslam/src/{CEdgeCounter,TSlidingWindow,
-   CWindowObserver}.cpp`, `mrpt_obs/src/gnss_messages_novatel.cpp`,
-   `mrpt_obs/src/carmen_log_tools.cpp`,
-   `mrpt_viz/src/PLY_import_export.cpp`, `mrpt_viz/src/COrbitCameraController.cpp`,
-   `mrpt_img/src/CImage_loadXPM.cpp`, `mrpt_slam/src/slam/
-   CRejectionSamplingRangeOnlyLocalization.cpp`.
+   CWindowObserver}.cpp`,
+   `mrpt_slam/src/slam/CRejectionSamplingRangeOnlyLocalization.cpp`.
+   (`mrpt_img/src/CImage_loadXPM.cpp` cleared this bucket as of 2026-07-10, now ~90%;
+   `mrpt_obs/src/gnss_messages_novatel.cpp` and `mrpt_obs/src/carmen_log_tools.cpp`
+   also cleared as of 2026-07-10, now at 100% and 88.2% respectively;
+   `mrpt_viz/src/PLY_import_export.cpp` and `mrpt_viz/src/COrbitCameraController.cpp`
+   cleared as of 2026-08-02, now at 54.7% and 100% respectively.)
 
 5. **Biggest single-file impact (most uncovered lines, worth prioritizing for
-   raw percentage gains)**: `mrpt_viz/src/CPolyhedron.cpp` (1420 uncovered,
-   pure geometry, no GUI dependency — good test target),
-   `mrpt_maps/src/maps/CRandomFieldGridMap2D.cpp` (827),
-   `mrpt_maps/src/maps/CPointsMap.cpp` (547),
-   `mrpt_maps/src/maps/CGasConcentrationGridMap2D.cpp` (520),
-   `mrpt_obs/src/CObservation3DRangeScan.cpp` (459).
+   raw percentage gains)**:
+   `mrpt_maps/src/maps/COccupancyGridMap2D_io.cpp` (85, 56.0%),
+   `mrpt_maps/src/maps/COccupancyGridMap2D_simulate.cpp` (49, 53.3%).
+   (`mrpt_viz/src/CPolyhedron.cpp`, formerly the single biggest uncovered file
+   in the whole repo at 1420 uncovered lines, cleared this bucket as of
+   2026-08-02, now at 91.6%.)
+   (`mrpt_obs/src/CObservation3DRangeScan.cpp` cleared this bucket as of
+   2026-07-10, now at 89.1%; `mrpt_maps/src/maps/CRandomFieldGridMap2D.cpp`,
+   `CPointsMap.cpp`, `CGasConcentrationGridMap2D.cpp`, `CColouredOctoMap.cpp`,
+   `COctoMap.cpp`, and `COccupancyGridMap3D.cpp` all cleared it as of
+   2026-07-17 — see § above.)
 
 6. **Near-target modules (75-90%), smallest remaining gap to close first**:
-   `mrpt_bayes` (`CKalmanFilterCapable_impl.h` 71.4%), `mrpt_config`
-   (`CConfigFile.cpp` 59.3%), `mrpt_containers` (`yaml.cpp` 78.8%).
-   (`mrpt_graphs` and `mrpt_random` cleared this bucket as of 2026-07-06,
-   both now >90%.)
+   none currently flagged.
+   (`mrpt_graphs` and `mrpt_random` cleared this bucket as of 2026-07-06;
+   `mrpt_bayes` and `mrpt_config` cleared it as of 2026-07-09, both now >96%;
+   `mrpt_obs` improved to 87.0% as of 2026-07-10 but is still within this
+   range; `mrpt_containers` cleared it as of 2026-07-11, now at 92.9%,
+   remaining gaps being mostly defensive "should never happen" throws and
+   libfyaml parser error paths that are difficult to trigger without a
+   malformed internal parser state.)
 
 Branch coverage lags line coverage everywhere (often by 15-30 points),
 indicating error-handling and edge-case branches are the norm left untested
