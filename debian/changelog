@@ -1,0 +1,71 @@
+ros-lyrical-mrpt-tfest (3.1.3-1trixie) trixie; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Tue, 11 Aug 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.1.2-1trixie) trixie; urgency=high
+
+  * Fix a bug in ``se2_l2_robust()``'s point-matching RANSAC variant where a
+    single rejected candidate pair could permanently exclude a valid
+    correspondence from all further iterations, sometimes leaving the
+    result empty.
+  * Increase unit test coverage.
+  * Contributors: Jose Luis Blanco-Claraco
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Mon, 06 Jul 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.1.1-1trixie) trixie; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Fri, 03 Jul 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.1.0-1trixie) trixie; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Thu, 02 Jul 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.0.4-1trixie) trixie; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Tue, 16 Jun 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.0.3-1trixie) trixie; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Sun, 14 Jun 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.0.2-1trixie) trixie; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Wed, 10 Jun 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.0.1-1trixie) trixie; urgency=high
+
+  * Merge pull request #1363 <https://github.com/MRPT/mrpt/issues/1363> from MRPT/fix/dont-export-eigen3-dep
+    refactor: limit visibility of eigen3 as build dep
+  * refactor: limit visibility of eigen3 as build dep
+  * Contributors: Jose Luis Blanco-Claraco
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Wed, 10 Jun 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (3.0.0-1trixie) trixie; urgency=high
+
+
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Fri, 05 Jun 2026 22:00:00 -0000
+
+ros-lyrical-mrpt-tfest (2.20.0-1trixie) trixie; urgency=high
+
+  * Last release of the 2.x series. Starting from 3.0.0, changes are tracked
+    in each module's own CHANGELOG.rst file.
+  * Contributors: Jose Luis Blanco-Claraco
+
+ -- "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>  Fri, 05 Jun 2026 22:00:00 -0000
+
+
