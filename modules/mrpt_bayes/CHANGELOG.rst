@@ -2,6 +2,12 @@
 Changelog for package mrpt_bayes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.1.3 (2026-08-12)
+------------------
+* mrpt_bayes: increase code coverage and fix bugs.
+  Add unit tests for Kalman and Particle filters. Fix latent bugs in EKF observation Jacobians and CParticleFilterCapable resampling.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.2 (2026-07-07)
 ------------------
 
