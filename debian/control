@@ -1,0 +1,12 @@
+Source: ros-kilted-mrpt-apps-gui
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, ros-kilted-mrpt-common, ros-kilted-mrpt-graphslam, ros-kilted-mrpt-kinematics, ros-kilted-mrpt-libapps-gui, ros-kilted-mrpt-nav, ros-kilted-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-kilted-mrpt-apps-gui
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-kilted-mrpt-common, ros-kilted-mrpt-graphslam, ros-kilted-mrpt-kinematics, ros-kilted-mrpt-libapps-gui, ros-kilted-mrpt-nav, ros-kilted-ros-workspace
+Description: MRPT graphical user interface applications
