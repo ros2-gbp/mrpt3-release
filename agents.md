@@ -201,10 +201,12 @@ files needed changes.
 A full rebuild of all 33 `modules/*` packages was done with coverage
 instrumentation, followed by a full `colcon test` run (all tests passed) and a
 `gcovr` line/branch report. **Goal: 90% line coverage per module.** Current
-overall (2026-07-06): **51.3% lines / 38.1% branches** — well short of goal.
-Per-module rows below are still the 2026-07-03 baseline except where a row is
-tagged with a newer date (e.g. `mrpt_math`, `mrpt_graphs`, after their
-unit-test passes).
+overall (2026-08-31, deduplicated the same way as
+`scripts/coverage_module_report.py`): **73.6% lines / 54.4% branches**
+- still short of goal, dominated by the hardware/GUI modules below.
+The whole table below was re-measured on 2026-08-31; the date tags on some
+rows mark when that module last had a dedicated unit-test pass, and point at
+the footnote describing it.
 
 Gotcha (2026-07-06): the system `gcov` alias (`/etc/alternatives/gcov`) may
 point to an unrelated binary (observed pointing to `/usr/bin/gc`), causing
@@ -223,6 +225,13 @@ gcovr --root . -j$(nproc) --gcov-ignore-parse-errors=all \
   --exclude '.*_unittest\.cpp' --exclude '.*/python_bindings/.*' --exclude '.*/samples/.*' \
   --json-pretty -o coverage.json build
 ```
+Gotcha (2026-08-28): `--base-paths modules` deliberately excludes `apps/`, so
+the `rawlog-edit` binary is never built and the ~40 `RawlogEditCLITest` cases
+in `mrpt_libapps_cli` all `GTEST_SKIP()` with "rawlog-edit binary not found".
+Following the recipe verbatim therefore measures that module at ~8% rather
+than the ~59% recorded below. Add `apps` to the `--base-paths` list when the
+`mrpt_libapps_*` numbers matter.
+
 (`--gcov-ignore-parse-errors=all` is needed, not just `negative_hits.warn_once_per_file`:
 large repos also trip gcovr's "suspicious hits" detector, e.g. on
 `mrpt_maps/src/maps/COccupancyGridMap2D_likelihood.cpp`, which otherwise aborts
@@ -291,34 +300,36 @@ and accurate path — pick two.
 | mrpt_imgui | 0/53 | 0.0% | 0.0% |
 | mrpt_gui | 22/4621 | 0.5% | 0.2% |
 | mrpt_hwdrivers | 913/6592 | 13.9% | 9.7% |
-| mrpt_comms | 237/1013 | 23.4% | 11.2% |
-| mrpt_kinematics | 184/482 | 38.2% | 17.9% |
-| mrpt_graphslam | 257/611 | 42.1% | 37.3% |
-| mrpt_opengl | 2035/4234 | 48.1% | 30.1% |
-| mrpt_system | 1012/1900 | 53.3% | 39.6% |
-| mrpt_io | 726/1292 | 56.2% | 39.9% |
-| mrpt_libapps_cli | 1130/1910 | 59.2% | 38.0% |
-| mrpt_libapps_gui | 952/1567 | 60.8% | 42.6% |
-| mrpt_nav | 3928/6234 | 63.0% | 45.3% |
-| mrpt_slam | 2778/4299 | 64.6% | 43.7% |
-| mrpt_viz (2026-08-02) | 6449/9426 | 68.4% | 50.1% |
-| mrpt_rtti | 126/176 | 71.6% | 73.5% |
-| mrpt_serialization | 511/708 | 72.2% | 52.5% |
-| mrpt_maps (2026-08-03)§ | 10127/11696 | 86.6% | 62.5% |
-| mrpt_math (2026-07-05) | 6914/8070 | 85.7% | 57.5% |
-| mrpt_core | 541/628 | 86.1% | 64.8% |
-| mrpt_obs (2026-07-10) | 4631/5324 | 87.0% | 56.1% |
-| mrpt_img (2026-07-10)† | 2255/2495 | 90.4% | 69.2% |
-| mrpt_graphs (2026-07-06) | 1022/1111 | 92.0% | 76.7% |
-| mrpt_poses | 6263/6787 | 92.3% | 59.8% |
-| mrpt_containers (2026-07-11) | 1146/1234 | 92.9% | 48.2%‡ |
+| mrpt_opengl | 2041/4234 | 48.2% | 30.3% |
+| mrpt_libapps_cli | 1129/1910 | 59.1% | 38.0% |
+| mrpt_libapps_gui | 803/1288 | 62.3% | 45.8% |
+| mrpt_viz (2026-08-02) | 6511/9440 | 69.0% | 50.5% |
+| mrpt_common | 5/7 | 71.4% | 0.0% |
+| mrpt_graphslam (2026-08-28)¤ | 453/618 | 73.3% | 60.5% |
+| mrpt_comms (2026-08-29)» | 687/906 | 75.8% | 54.4% |
+| mrpt_examples_cpp | 99/128 | 77.3% | 46.3% |
+| mrpt_system (2026-08-29)» | 1622/1963 | 82.6% | 58.5% |
+| mrpt_rtti (2026-08-29)» | 151/176 | 85.8% | 77.4% |
+| mrpt_maps (2026-08-03)§ | 10118/11698 | 86.5% | 62.8% |
+| mrpt_io (2026-08-29)» | 1133/1310 | 86.5% | 69.7% |
+| mrpt_containers (2026-07-11) | 1633/1848 | 88.4% | 54.4%‡ |
+| mrpt_obs (2026-07-10) | 6066/6856 | 88.5% | 61.0% |
+| mrpt_math (2026-07-05) | 6816/7674 | 88.8% | 60.3% |
+| mrpt_core | 571/636 | 89.8% | 69.9% |
+| mrpt_slam (2026-08-31)× | 3921/4346 | 90.2% | 62.3% |
+| mrpt_nav (2026-08-28)¶ | 5683/6287 | 90.4% | 68.9% |
+| mrpt_graphs (2026-07-06) | 1023/1112 | 92.0% | 76.5% |
+| mrpt_poses | 6279/6787 | 92.5% | 60.9% |
+| mrpt_img (2026-07-10)† | 2839/3061 | 92.7% | 71.0% |
 | mrpt_expr | 93/100 | 93.0% | 60.2% |
-| mrpt_random | 160/167 | 95.8% | 85.1% |
-| mrpt_bayes (2026-07-09) | 1036/1078 | 96.1% | 77.4% |
-| mrpt_config (2026-07-09) | 531/548 | 96.9% | 82.3% |
-| mrpt_tfest (2026-07-07) | 633/652 | 97.1% | 73.3% |
-| mrpt_topography (2026-07-10) | 373/375 | 99.5% | 91.2% |
-| mrpt_typemeta | 57/57 | 100.0% | 85.1% |
+| mrpt_bayes (2026-07-09) | 1049/1090 | 96.2% | 80.2% |
+| mrpt_serialization (2026-08-29)» | 728/754 | 96.6% | 74.7% |
+| mrpt_random | 162/167 | 97.0% | 88.4% |
+| mrpt_tfest (2026-07-07) | 635/654 | 97.1% | 73.1% |
+| mrpt_kinematics (2026-08-28)¶ | 503/518 | 97.1% | 81.2% |
+| mrpt_config (2026-07-09) | 536/548 | 97.8% | 84.6% |
+| mrpt_topography (2026-07-10) | 414/417 | 99.3% | 83.2% |
+| mrpt_typemeta | 57/57 | 100.0% | 80.9% |
 
 † `mrpt_img` vendors third-party `src/stb/*.h` (stb_image/stb_image_resize2/
 stb_image_write, public-domain), which is out of scope for tests like any
@@ -551,14 +562,292 @@ test), `opengl_fonts.h` (0%, embedded glyph bitmap data), and
 `CSetOfTexturedTriangles.cpp` (2.1%, needs a rendering-based test since its
 logic is mostly buffer-upload bookkeping).
 
+¶ `mrpt_nav` was raised from 63.0%/45.3% (2026-07-03 baseline) to
+90.0%/69.3% on 2026-08-28, together with `mrpt_kinematics`
+(38.2%/17.9% → 96.8%/83.5%), which had **no C++ unit tests at all** —
+only a python-bindings smoke test, so its `CMakeLists.txt` had no
+`LIB_UNIT_TEST_SOURCES` list at all and one had to be added. New test files:
+`mrpt_kinematics/tests/{CVehicleVelCmd,CVehicleSimul,CKinematicChain}_unittest.cpp`
+and `mrpt_nav/tests/{TWaypoint,PTG_variants,CAbstractNavigator,nav_misc,
+planners_and_logs,holonomic_config,rnav_variants,nav_interfaces}_unittest.cpp`.
+`CPTG_DiffDrive_CC`/`_CS`/`_CCS` had never been instantiated by any test
+(~2% each) and `impl_renderMoveTree.h` was at 0%.
+
+Real bugs found and fixed along the way: (1) `CVehicleVelCmd`'s copy
+constructor delegated to `operator=()`, which dispatches pure virtual methods
+while the derived object is still under construction — copy-constructing *any*
+velocity command aborted the process; (2)
+`CAbstractNavigator::internal_onStartNewNavigation()` cleared the cached pose
+history but left `m_last_curPoseVelUpdate_robot_time` untouched, so the
+`updateCurrentPoseAndSpeeds()` call right after it was skipped by its 20 ms
+minimum-period throttle and the following `ASSERT_(!m_latestPoses.empty())`
+threw on the first navigation step of *every* waypoint mission and *every*
+relative-target navigation; (3) `performNavigationStepNavigating()` ended with
+`m_navigationState = prevState;`, undoing the transitions it had just decided,
+so neither an exception nor `doEmergencyStop()` could ever leave the navigator
+in `NAV_ERROR` (the assignment was meant for `m_lastNavigationState`, and it
+was also what masked bug (2)); (4)
+`CWaypointsNavigator::checkHasReachedTarget()` dereferenced a possibly-null
+waypoint pointer via `(wp == nullptr && ...) || (wp->reached)`; (5)
+`CParameterizedTrajectoryGenerator::Alpha2index()` discarded `wrapToPi()`'s
+return value, clamping out-of-range directions to the first/last path instead
+of wrapping; (6) `CMultiObjectiveMotionOptimizerBase::decide()` returned `-1`
+from a `std::optional<size_t>` function on a formula compile error — an
+*engaged* optional holding `SIZE_MAX`, indexed out of bounds by the caller;
+(7) its `clear()` kept the variable table, so the next `decide()` threw
+"Expression name already exists as an input variable"; (8) `CLogFileRecord`'s
+legacy (pre-v15) deserialization wrote velocity components into the wrong
+slots; (9) `CReactiveNavigationSystem3D::saveConfigFile()` never called the
+`CAbstractPTGBasedReactive` implementation, so a saved 3D config was an
+unloadable stub; (10) `PlannerSimple2D::computePath()`'s endpoint bounds check
+read `!(originInside || !targetInside)`, which only flagged
+origin-outside-*and*-target-inside and let an out-of-grid target fall through
+into the search.
+
+Gotchas for future passes on these modules:
+
+* `mrpt_nav`'s `LIB_UNIT_TEST_SOURCES` is an explicit list (like `mrpt_maps`',
+  unlike glob-based modules): a new `*_unittest.cpp` silently never runs until
+  it is registered there.
+* `rnav_unittest.cpp`'s helper `return`s silently when the shared
+  `navigation-ptgs/*.ini` files are missing *and* swallows every exception, so
+  it can pass while testing nothing. New reactive-navigation tests build their
+  configuration with `mrpt::config::CConfigFileMemory` instead.
+* Reactive navigation tests must advance the robot's **navigation time**
+  (`CRobot2NavInterface::getNavigationTime()`), not only the wall/simulated
+  clock: `updateCurrentPoseAndSpeeds()` throttles to one query per 20 ms of
+  robot time, and a mock returning a constant leaves the pose cache empty.
+* `CHolonomicFullEval::navigate()` asserts `ni.clearance != nullptr`;
+  `CHolonomicVFF`/`CHolonomicND` ignore that field.
+* `CPTG_DiffDrive_*` need a polygonal robot shape in the config
+  (`shape_x0`/`shape_y0`/...) or `initialize()` throws "Robot shape was not
+  defined"; `CPTG_Holo_Blend` takes `robot_radius` instead and rejects a
+  polygonal one. `setRefDistance()` throws on a collision-grid PTG once
+  initialized.
+* With a `CPTG_Holo_Blend`, a waypoint left at `TWaypoint`'s default
+  `speed_ratio = 1.0` yields no viable movement at all and the mission times
+  out; `rnav_variants_unittest.cpp` sets an explicit `0.05`. Not investigated
+  further.
+* `CWaypointsNavigator::m_last_alignment_cmd` is set in the constructor and
+  never updated when an alignment command is issued, so the "give the
+  alignment some time to finish" wait actually measures time since the
+  navigator was constructed. Left as-is: fixing it adds a real dwell at every
+  waypoint with a heading.
+* `CVehicleSimulVirtualBase::setCurrentOdometricPose()` is templated but does
+  not accept a `mrpt::poses::CPose2D` (there is no `TPose2D` constructor from
+  it); pass `.asTPose()`.
+
+¤ Second coverage pass of 2026-08-28, on the four largest remaining pure-logic
+gaps after `mrpt_nav`/`mrpt_kinematics` (see ¶). Whole files that had never
+had a single assertion run against them: `mrpt_graphslam/src/TSlidingWindow.cpp`
+(0%), `.../CEdgeCounter.cpp` (0%), `mrpt_system/src/md5.cpp` (0%),
+`mrpt_slam/src/slam/CRejectionSamplingRangeOnlyLocalization.cpp` (0%), and
+`mrpt_io/src/vector_loadsave.cpp` (16%).
+
+Real bugs found and fixed: (1) `TSlidingWindow::getMean()` divided by zero on
+an empty window, returning NaN -- and since every comparison against a NaN is
+false, `evaluateMeasurementAbove()` was then stuck at `false` for *any* input;
+(2) `TSlidingWindow::getStdDev()` normalized by the window *capacity* instead
+of the number of measurements held, so a partially-filled window
+systematically under-reported sigma (and disagreed with `getMean()`, which
+uses the sample count); (3) `TSlidingWindow::resizeWindow()` invalidated the
+mean/median caches but never the std-dev one -- stale after a shrink, and on
+a grow it invalidated nothing at all even though the reported value depended
+on `m_win_size`; (4) `CEdgeCounter::clearAllEdges()` reset every counter
+except `m_unique_edges`, so a "cleared" instance still reported a stale
+unique-edge total; (5) `mrpt::system::md5(const std::vector<uint8_t>&)` used
+`&str[0]`, an out-of-bounds access for an empty vector whose resulting
+pointer then tripped the `ASSERT_(data)` in the overload it delegates to --
+so `md5(empty_vector)` threw while `md5(empty_string)` returned the correct
+digest; (6,7,8) `mrpt::io::vectorNumericFromTextFile()` discarded `fscanf`'s
+return value in its default (`byRows == false`) path -- `(!byRows) ||`
+short-circuits -- so a failed read still pushed the stale `number` and an
+empty file yielded `{0.0}`; it also never cleared its output vector (unlike
+`loadTextFile()`/`loadBinaryFile()`, which both do) and leaked the `FILE*`
+that every sibling function in the same file closes.
+
+Notable non-result: `CRejectionSamplingRangeOnlyLocalization.cpp` was the
+largest 0% file in the repo (117 lines), but the 10 new tests covering the
+beacon-height projection, sensor-offset compensation and two-circle
+intersection geometry all passed first try. It was simply untested, not
+broken.
+
+Left documented rather than changed, as the intent is genuinely ambiguous:
+`CEdgeCounter::addEdge(name, is_loop_closure=true, is_new=true)` throws when
+the edge type already exists but silently drops the loop-closure count when
+it is new -- same arguments, opposite behavior depending on prior state.
+
+`CControlledRateTimer`'s header docs were corrected to match the
+implementation rather than the reverse: the low-pass filter is
+`estimation = a0*former_estimation + (1-a0)*input` (the doc had the weights
+swapped), and the documented defaults for `Ti` (0.0194) and `a0` (0.9)
+disagreed with the member initializers (0.1 and 0.99). The control law itself
+was left untouched -- it is the sensible reading for a *low*-pass filter and
+the PI gains were presumably tuned against it. A new
+`CControlledRateTimer_unittest.cpp` pins both the documented defaults and the
+filter's weighting (with `a0 == 1` the estimate must ignore the measurement
+entirely and stay on the set-point), so the two cannot drift apart again.
+
+» Coverage pass of 2026-08-29 on the five remaining pure-logic modules below
+90%: `mrpt_serialization` (72.2% -> 96.6%), `mrpt_rtti` (71.6% -> 85.8%),
+`mrpt_comms` (23.4% -> 75.8%), `mrpt_io` (63.6% -> 86.5%) and `mrpt_system`
+(61.7% -> 82.6%). `mrpt_serialization` had **no unit tests of its own at
+all** before this (its `CMakeLists.txt` said so); it now has them, using only
+`std::stringstream`/`std::vector<uint8_t>` archives.
+
+Two testing techniques worth reusing:
+
+* `mrpt_comms/tests/comms_test_server.{h,cpp}` runs a one-shot local TCP
+  server built on `CServerTCPSocket`, which lets `net_utils`' HTTP client be
+  driven end-to-end (200/404, the NTRIP `SOURCETABLE` answer, chunked
+  transfer encoding, basic auth, POST bodies) with no network access:
+  `net_utils.cpp` went from 2.1% to 90.3%.
+* `mrpt_comms/tests/CSerialPort_unittest.cpp` opens a pseudo-terminal
+  (`posix_openpt`) and treats it as a serial device, so `open`/`setConfig`/
+  `Read`/`Write`/`ReadString` all run against real termios without hardware:
+  `CSerialPort.cpp` went from 0% to 68.2%. Note that `CSerialPort::Write()`
+  ends in `tcdrain()`, which on macOS blocks until the far end consumes the
+  data, so any such test must read from the master concurrently.
+
+Real bugs found and fixed: (1) `CArchive::sendMessage()` wrote the payload
+length low byte first while `receiveMessage()` and the documented frame
+format both expect the high byte first, so no message of 256 bytes or more
+could ever be received back; it also accepted payloads larger than the 16-bit
+length field, overflowing its fixed frame buffer past ~64 KiB; (2)
+`receiveMessage()` treated a complete frame with an empty payload as an
+end-of-stream, rejecting it; (3) `operator<<(const std::monostate&)` writes
+no version byte but the header parser only skipped that byte for `"nullptr"`,
+so an empty `std::variant` could not be deserialized; (4)
+`zip::decompress()`'s `std::vector` overload passed an *uninitialized* length
+to zlib's `uncompress()`, which takes it as the capacity of the output
+buffer; (5) `mrpt::system::getFileSize()` is documented to return `size_t(-1)`
+on error but used the throwing overload of `std::filesystem::file_size`, so
+`CFileGZInputStream::open()` and `zip::decompress_gz_file()` -- both
+documented to return `false` -- threw instead; (6) `CMemoryStream::Seek()`
+used the `Origin` enumerator in place of `Offset` when seeking from the end,
+and clamped to the *allocated* size minus one, which underflows on an empty
+stream; (7) `CStream::getline()` left a stray unwritten byte in the output on
+EOF; (8) `CClientTCPSocket::connect()` created the socket and then threw from
+every later failure path without closing it, leaving `isConnected()` lying;
+(9) `http_request()` never trimmed its read buffer back to what was actually
+received, so a 13-byte body came back as a ~1.4 kB vector; (10)
+`consoleColorAndStyle()` had its stream selection inverted, so
+`COutputLogger`'s error-level color codes went to stdout while the text went
+to stderr; (11) `CFileSystemWatcher`'s destructor never joined the watch
+thread it starts on Windows, so destroying one called `std::terminate()` --
+the new tests are the first code to ever destroy one. `mrpt::io::CompressionType`
+was also defined twice, identically, in `detect_compression.h` and
+`compression_options.h`, so including both headers did not compile.
+
+Left documented rather than changed:
+
+* `CClientTCPSocket::connect()` implements the "wait until the connection
+  attempt completes" step only for Linux (`epoll_wait`) and Apple
+  (`select`) -- there is no Windows branch, so a connection to a closed port
+  is reported as established there and the first `writeAsync()` then blocks
+  forever (its `select()` only watches the write set, while Winsock signals a
+  failed connect through the exception set). The two tests that depend on a
+  refused connection being noticed `GTEST_SKIP()` on Windows.
+* `CFileGZInputStream(fileName)` and `CCompressedInputStream(fileName)` both
+  document `\exception std::exception If there's an error opening the file`
+  but ignore `open()`'s result, silently yielding a closed stream; their
+  output counterparts do throw. Making them throw would change the contract
+  of `zip::decompress_gz_file()`, which relies on the current behavior.
+* `mrpt_rtti`'s remaining uncovered lines are almost entirely the deferred
+  class-registration queue (`pending_class_registers()`,
+  `queue_register_functions_t`, and the drain loop in
+  `registerAllPendingClasses()`): nothing in the repo ever pushes to it, so
+  it is dead code left over from MRPT 1.x's `CLASS_INIT` mechanism.
+  Removing it would take the module to ~94%.
+
+× Coverage pass of 2026-08-31 on `mrpt_slam` (67.9% -> 90.2%), the last
+pure-logic module still far from the goal. New tests avoid dataset files by
+simulating everything: `mrpt_slam/tests/slam_synthetic_room.h` builds a closed
+10x10 m gridmap and simulates 2D scans and odometry actions from it (shared by
+the ICP-builder, RBPF and MCL tests), while the EKF-SLAM tests drive
+`CLandmarksMap::simulateRangeBearingReadings()` over a handful of landmarks.
+Files that had never had a single assertion run against them:
+`src/slam/CLandmarksMap.cpp` (0%) and `src/slam/observations_overlap.cpp` (0%).
+
+Real bugs found and fixed: (1) `observationsOverlap()`'s `CSensoryFrame`
+overload declared its relative-pose argument `[[maybe_unused]]` and never
+forwarded it, so `CIncrementalMapPartitioner`'s `smOBSERVATION_OVERLAP`
+similarity compared every keyframe pair as if co-located; (2)
+`CIncrementalMapPartitioner::addMapFrame()` passed the *same* relative pose to
+both directions of its symmetrized similarity, but the callback always expects
+"kf2 with respect to kf1", so the swapped evaluation needs the inverse -- this
+moves one keyframe between partitions in the malaga dataset test, whose
+expected output was updated; (3) `removeSetOfNodes(..., changeCoordsRef=true)`
+composed `+p` instead of `-p`, doubling the first node's coordinates instead of
+moving it to the origin as documented (it now reuses
+`changeCoordinatesOriginPoseIndex(0)`); (4) two `TOptions` entries were loaded
+with a *quoted* first argument to `MRPT_LOAD_HERE_CONFIG_VAR`, which
+stringifies it again, so `minDistForCorrespondence`/`minMahaDistForCorrespondence`
+could never be read from a config file; (5) `mrpt::maps::CLandmarksMap` is
+`IMPLEMENTS_SERIALIZABLE` but was never registered in
+`registerAllClasses_mrpt_slam()`, so it could not be deserialized;
+(6) `TSetOfMetricMapInitializers::saveToConfigFile()` (in `mrpt_obs`) wrote a
+format `loadFromConfigFile()` cannot read -- no `<class>_count` keys and
+section names without the map index or the `_creationOpts` suffix -- so the
+round trip always yielded zero maps; (7) `CMultiMetricMapPDF::getLastPose()`
+never set its `is_valid_pose` output on the success path, unlike the two
+sibling implementations; (8) `CMetricMapBuilderICP::saveCurrentEstimationToImage()`
+dereferenced the gridmap pointer right after null-checking it, segfaulting when
+the multi-metric map has no gridmap; (9) the range-only (beacon) branch of
+`CMultiMetricMapPDF::prediction_and_update_pfOptimalProposal()` only ever set
+`firstEstimateRobotHeading` in the no-odometry path and in the unreachable SOG
+sub-method, so with odometry present it always hit the assert guarding it --
+RO-SLAM with the exact optimal proposal could not run at all. It also printed
+the drawn position to `std::cout` on every particle; that is now a debug-level
+log message.
+
+Both `CRangeBearingKFSLAM::TOptions::dumpToTextStream()` and its 2D
+counterpart silently omitted every noise parameter they load
+(`std_sensor_*`, `stds_Q_no_odo`, `std_odo_z_additional`, ...); they now print
+them.
+
+Worth knowing for future tests here:
+
+* `CMetricMapBuilderRBPF::TConstructionOptions::loadFromConfigFile()` reads
+  `insertionAngDistance_deg`, but `CMetricMapBuilderICP::TConfigParams` reads
+  `insertionAngDistance` (already in degrees). The KF-SLAM classes'
+  `loadOptions()` always read from the section named `RangeBearingKFSLAM`,
+  whatever the file is called.
+* `CRangeBearingKFSLAM2D` asserts `pitch == 0` on every observation, so a
+  simulated `CObservationBearingRange` for it must use a zero pitch *noise*,
+  not just coplanar landmarks.
+* `CMonteCarloLocalization2D`/`3D` do not implement `pfOptimalProposal` (only
+  the standard and the two auxiliary variants); `CParticleFilter` throws for
+  it. An adaptive (KLD) sample size additionally requires
+  `resamplingMethod = prMultinomial`.
+* With known landmark IDs, the EKF-SLAM filters skip data association
+  altogether: `getLastDataAssociation().predictions_IDs` stays empty and only
+  `results.associations` is filled from the IDs.
+* The beacon branch of the RBPF optimal proposal only handles `pdfGauss`/
+  `pdfSOG` beacons, so a `CBeaconMap` feeding it needs
+  `insertionOpts.insertAsMonteCarlo = false`.
+* Do **not** timestamp simulated observations/actions with one
+  `mrpt::Clock::now()` call per step: on Windows its resolution (~15 ms) is
+  coarse enough that consecutive calls return the *same* value, and
+  `CRobot2DPoseEstimator::processUpdateNewOdometry()` then drops every update
+  ("Diff. in timestamps between odometry should be >0"), so the ICP builder's
+  pose never advances. `slam_synthetic_room.h::nextTimestamp()` hands out
+  timestamps 100 ms apart instead; give the action and the observation of the
+  same step the *same* one, or the pose gets extrapolated twice.
+* `RecursiveSpectralPartition()` returns a stable set of clusters, but their
+  order depends on the sign of the eigenvector and differs between platforms:
+  sort them before comparing.
+
 ### Weak areas, grouped by root cause
 
-1. **Hardware drivers — `mrpt_hwdrivers` (13.9%), most of `mrpt_comms` (23.4%)**:
-   inherently hard to unit-test since they talk to real serial ports/USB/GPS/
-   LIDAR/cameras (`CHokuyoURG`, `CSickLaserSerial`, `COpenNI2Generic`,
-   `CVelodyneScanner`, `CSerialPort`, `CNTRIPClient`, `CKinect`, etc., all at
-   0%). Improving this needs a mockable transport layer (inject a fake
-   `CStream`/socket) rather than plain unit tests against hardware.
+1. **Hardware drivers - `mrpt_hwdrivers` (13.9%)**: inherently hard to
+   unit-test since they talk to real serial ports/USB/GPS/LIDAR/cameras
+   (`CHokuyoURG`, `CSickLaserSerial`, `COpenNI2Generic`, `CVelodyneScanner`,
+   `CNTRIPClient`, `CKinect`, etc., all at 0%). Improving this needs a
+   mockable transport layer (inject a fake `CStream`/socket) rather than
+   plain unit tests against hardware. `mrpt_comms` cleared this bucket on
+   2026-08-29 (see » above): everything but `CInterfaceFTDI` turned out to be
+   testable over loopback sockets and a pseudo-terminal.
 
 2. **GUI/rendering — `mrpt_gui` (0.5%), `mrpt_imgui` (0%), and GUI-only files
    inside `mrpt_viz`/`mrpt_opengl`**: `mathplot.cpp`, `CDisplayWindow*.cpp`,
@@ -574,9 +863,17 @@ logic is mostly buffer-upload bookkeping).
 
 4. **Quick wins — pure-logic files at 0% with no hardware/GUI dependency**
    (highest-value gaps, ordinary unit tests would work immediately):
-   `mrpt_system/src/md5.cpp`, `mrpt_graphslam/src/{CEdgeCounter,TSlidingWindow,
-   CWindowObserver}.cpp`,
-   `mrpt_slam/src/slam/CRejectionSamplingRangeOnlyLocalization.cpp`.
+   `mrpt_graphslam/src/CWindowObserver.cpp`.
+   (`mrpt_slam/src/slam/{CLandmarksMap,observations_overlap}.cpp` cleared this
+   bucket as of 2026-08-31 — see × above.)
+   (`mrpt_system/src/CFileSystemWatcher.cpp`, `mrpt_system/src/{progress,
+   hyperlink,CObserver}.cpp`, `mrpt_io/src/{detect_compression,
+   lazy_load_path}.cpp` and `mrpt_comms/src/{net_utils,CSerialPort}.cpp` all
+   cleared this bucket as of 2026-08-29 — see » above.)
+   (`mrpt_system/src/md5.cpp`, `mrpt_graphslam/src/{CEdgeCounter,
+   TSlidingWindow}.cpp` and
+   `mrpt_slam/src/slam/CRejectionSamplingRangeOnlyLocalization.cpp` all
+   cleared this bucket as of 2026-08-28 — see ¤ above.)
    (`mrpt_img/src/CImage_loadXPM.cpp` cleared this bucket as of 2026-07-10, now ~90%;
    `mrpt_obs/src/gnss_messages_novatel.cpp` and `mrpt_obs/src/carmen_log_tools.cpp`
    also cleared as of 2026-07-10, now at 100% and 88.2% respectively;
@@ -586,6 +883,7 @@ logic is mostly buffer-upload bookkeping).
 5. **Biggest single-file impact (most uncovered lines, worth prioritizing for
    raw percentage gains)**:
    `mrpt_maps/src/maps/COccupancyGridMap2D_io.cpp` (85, 56.0%),
+   `mrpt_nav/src/reactive/CAbstractPTGBasedReactive.cpp` (123, 82.1%),
    `mrpt_maps/src/maps/COccupancyGridMap2D_simulate.cpp` (49, 53.3%).
    (`mrpt_viz/src/CPolyhedron.cpp`, formerly the single biggest uncovered file
    in the whole repo at 1420 uncovered lines, cleared this bucket as of
@@ -597,8 +895,17 @@ logic is mostly buffer-upload bookkeping).
    2026-07-17 — see § above.)
 
 6. **Near-target modules (75-90%), smallest remaining gap to close first**:
-   none currently flagged.
-   (`mrpt_graphs` and `mrpt_random` cleared this bucket as of 2026-07-06;
+   `mrpt_system` (82.6%; `CTimeLogger.cpp`, `COutputLogger.cpp` and
+   `filesystem.cpp` are what is left), `mrpt_rtti` (85.8%, but see the dead
+   registration queue noted in » above), `mrpt_io` (86.5%; `CPipe.cpp` needs
+   child processes), `mrpt_comms` (75.8%; the rest is `CInterfaceFTDI`, which
+   needs a real FTDI device).
+   (`mrpt_slam` cleared this bucket as of 2026-08-31, now at 90.2%; what is
+   left there is `PF_implementations.h` (60.6%, mostly the auxiliary-PF
+   sub-variants and the KLD adaptive-sampling paths), `CICP.cpp` (87.9%) and
+   `data_association.cpp` (84.5%).)
+   (`mrpt_serialization` cleared this bucket as of 2026-08-29, now at 96.6%;
+   `mrpt_graphs` and `mrpt_random` cleared it as of 2026-07-06;
    `mrpt_bayes` and `mrpt_config` cleared it as of 2026-07-09, both now >96%;
    `mrpt_obs` improved to 87.0% as of 2026-07-10 but is still within this
    range; `mrpt_containers` cleared it as of 2026-07-11, now at 92.9%,
