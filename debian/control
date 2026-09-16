@@ -1,0 +1,12 @@
+Source: ros-jazzy-mrpt-examples-cpp
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libglfw3-dev, ros-jazzy-mrpt-common, ros-jazzy-mrpt-data, ros-jazzy-mrpt-graphslam, ros-jazzy-mrpt-gui, ros-jazzy-mrpt-imgui, ros-jazzy-mrpt-libapps-cli, ros-jazzy-mrpt-libapps-gui, ros-jazzy-mrpt-nav, ros-jazzy-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-mrpt-examples-cpp
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-mrpt-common, ros-jazzy-mrpt-data, ros-jazzy-mrpt-graphslam, ros-jazzy-mrpt-gui, ros-jazzy-mrpt-imgui, ros-jazzy-mrpt-libapps-cli, ros-jazzy-mrpt-libapps-gui, ros-jazzy-mrpt-nav, ros-jazzy-ros-workspace
+Description: C++ examples demonstrating MRPT functionality
