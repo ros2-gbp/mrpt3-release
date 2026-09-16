@@ -2,6 +2,12 @@
 Changelog for package mrpt_system
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* test: expand headless GUI and graphslam coverage under Xvfb, fixing the bugs those runs exposed.
+* fix: correct time-logging alignment and GUI input issues that broke registration and mouse handling.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.4 (2026-09-04)
 ------------------
 * Merge pull request `#1393 <https://github.com/MRPT/mrpt/issues/1393>`_ from MRPT/test/coverage-system

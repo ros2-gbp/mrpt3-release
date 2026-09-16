@@ -2,6 +2,15 @@
 Changelog for package mrpt_containers
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* feat: API cleanup pass for archive handling, const-correctness, and points-map accessors before the next minor bump.
+* feat(mrpt_obs,mrpt_viz,mrpt_maps): enforce deep const-correctness in smart-pointer containers and return ConstPtr from const iteration paths.
+* fix: resolve ROS/GCC buildfarm warnings across the affected packages and fix the real correctness issues they exposed.
+* fix: replace the Clock::time_point stream overload with a gtest PrintTo hook to avoid ambiguous overload resolution.
+* fix: tighten enum underlying types and other warning-driven fixes for safer, more portable builds.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.4 (2026-09-04)
 ------------------
 * fix(mrpt_containers): yaml double round-trip precision loss, %.16g -> %.17g (`#1396 <https://github.com/MRPT/mrpt/issues/1396>`_).
