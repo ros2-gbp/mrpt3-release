@@ -2,6 +2,16 @@
 Changelog for package mrpt_opengl
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* fix: restore 2D overlay rendering for scene cameras and text labels.
+* refactor: tighten pointer const-correctness and API consistency across the render stack.
+* fix: restore missing render buffers and fix rendering regressions uncovered by the new tests.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
 3.1.3 (2026-08-12)
 ------------------
 * test(mrpt_viz): add extensive unit test coverage for mrpt::viz classes.
