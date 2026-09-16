@@ -2,6 +2,12 @@
 Changelog for package mrpt_serialization
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* refactor: improve archive API ergonomics and finalize the 3.x API cleanup pass for serialization and container access.
+* fix: resolve buildfarm warning issues and the correctness bugs they exposed across the shared serialization stack.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.4 (2026-09-04)
 ------------------
 * test(mrpt_serialization): add a unit test suite (module had none) covering CArchive, CMessage, and STL/std::optional serialization (`#1390 <https://github.com/MRPT/mrpt/issues/1390>`_).
