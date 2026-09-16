@@ -2,6 +2,13 @@
 Changelog for package mrpt_obs
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* feat: improve API consistency and const-correctness across smart-pointer containers and points-map access.
+* fix: resolve ROS warning cleanup issues and fix the correctness problems they exposed.
+* feat: raise coverage in math, maps, obs, and slam with new serialization and regression tests.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.4 (2026-09-04)
 ------------------
 * Merge pull request `#1395 <https://github.com/MRPT/mrpt/issues/1395>`_ from MRPT/test/coverage-2026-08-31
