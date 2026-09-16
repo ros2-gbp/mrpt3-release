@@ -2,6 +2,14 @@
 Changelog for package mrpt_data
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* Merge branch 'develop' into fix/stereo-rectify-map-axis-swap
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
 3.1.3 (2026-08-12)
 ------------------
 
