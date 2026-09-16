@@ -119,7 +119,7 @@ TEST(PlannerRRTSE2TPS, obstacles_are_taken_into_account)
   // A wall of obstacles right between start and goal:
   for (double y = -2.0; y <= 2.0; y += 0.05)
   {
-    pi.obstacles_points.insertPoint(1.0, y, .0);
+    pi.obstacles_points.insertPoint(1.0f, static_cast<float>(y), .0f);
   }
 
   PlannerRRT_SE2_TPS::TPlannerResult result;
@@ -215,13 +215,10 @@ TEST(PlannerSimple2D, unreachable_goal_yields_an_empty_path)
   PlannerSimple2D planner;
   planner.robotRadius = 0.15f;
 
-  std::deque<mrpt::math::TPoint2D> path;
-  bool notFound = false;
-  planner.computePath(
-      grid, mrpt::poses::CPose2D(-2, 0, 0), mrpt::poses::CPose2D(2, 0, 0), path, notFound, 20.0f);
+  const auto path = planner.computePath(
+      grid, mrpt::poses::CPose2D(-2, 0, 0), mrpt::poses::CPose2D(2, 0, 0), 20.0f);
 
-  EXPECT_TRUE(notFound);
-  EXPECT_TRUE(path.empty());
+  EXPECT_FALSE(path.has_value());
 }
 
 TEST(PlannerSimple2D, path_is_found_in_an_open_map)
@@ -233,15 +230,13 @@ TEST(PlannerSimple2D, path_is_found_in_an_open_map)
   PlannerSimple2D planner;
   planner.robotRadius = 0.15f;
 
-  std::deque<mrpt::math::TPoint2D> path;
-  bool notFound = true;
-  planner.computePath(
-      grid, mrpt::poses::CPose2D(-2, 0, 0), mrpt::poses::CPose2D(2, 0, 0), path, notFound, -1.0f);
+  const auto path = planner.computePath(
+      grid, mrpt::poses::CPose2D(-2, 0, 0), mrpt::poses::CPose2D(2, 0, 0), -1.0f);
 
-  EXPECT_FALSE(notFound);
-  EXPECT_GT(path.size(), 1U);
-  EXPECT_NEAR(path.back().x, 2.0, 0.5);
-  EXPECT_NEAR(path.back().y, 0.0, 0.5);
+  ASSERT_TRUE(path.has_value());
+  EXPECT_GT(path->size(), 1U);
+  EXPECT_NEAR(path->back().x, 2.0, 0.5);
+  EXPECT_NEAR(path->back().y, 0.0, 0.5);
 }
 
 // ---------------------------------------------------------------------------
