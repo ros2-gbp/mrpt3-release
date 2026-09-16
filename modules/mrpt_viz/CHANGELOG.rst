@@ -2,6 +2,17 @@
 Changelog for package mrpt_viz
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* fix: restore 2D overlay rendering and keep scene-camera/CText labels aligned with the expected screen-space behavior.
+* refactor: modernize const-correctness and API cleanup across visualization and related containers.
+* fix: resolve ROS buildfarm warnings and the correctness issues they exposed across the visualization stack.
+* test: expand legacy serialization and render-buffer coverage, fixing several stale-state and rendering regressions.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
 3.1.3 (2026-08-12)
 ------------------
 * test(mrpt_viz): add extensive unit test coverage for mrpt::viz classes.
