@@ -2,6 +2,14 @@
 Changelog for package mrpt_maps
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* feat: complete API cleanups for const-correctness, archive behavior, and point-map accessors.
+* fix: resolve ROS buildfarm warnings and the real correctness issues they exposed.
+* feat: expand coverage in map and geometry code with targeted regression tests and legacy serialization checks.
+* fix: correct PLY export/import, point-map behavior, and numerical edge cases uncovered by the coverage pass.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.4 (2026-09-04)
 ------------------
 * Merge pull request `#1402 <https://github.com/MRPT/mrpt/issues/1402>`_ from MRPT/fix/restore-cpointsmapxyzirt-serialization-compat
