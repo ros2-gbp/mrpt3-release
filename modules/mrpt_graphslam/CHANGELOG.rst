@@ -2,6 +2,19 @@
 Changelog for package mrpt_graphslam
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* fix: resolve ROS/GCC buildfarm warnings across the affected MRPT modules and fix the real correctness issues they exposed.
+* fix: remove dangling iterator, hidden serialization overload, enum-safety, and timestamp-printing problems uncovered during the warning pass.
+* fix: replace the Clock::time_point stream overload with a gtest PrintTo hook to avoid ambiguous overload resolution.
+* feat: improve graph-slam coverage under headless Xvfb and fix the real bugs uncovered by the new tests.
+* fix: correct graph registration bugs, missing defaults, alignment issues, and GUI mouse/color regressions found during the coverage pass.
+* Contributors: Jose Luis Blanco-Claraco
+  Ctrl+C was missed if any other modifier was held.
+  * CNodeRegistrationDecider_impl.h had `using namespace std;` at global scope
+  in a public header.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.4 (2026-09-04)
 ------------------
 * test(mrpt_graphslam): raise unit test coverage of TSlidingWindow and CEdgeCounter, previously untested (41%->72% lines) (`#1389 <https://github.com/MRPT/mrpt/issues/1389>`_).
