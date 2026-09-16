@@ -2,6 +2,14 @@
 Changelog for package mrpt_nav
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.0 (2026-09-16)
+------------------
+* fix: resolve the ROS warning cleanup issues and the real bugs they revealed in navigation code.
+* refactor: modernize the PTG/reactive API with std::optional and cleaner configuration semantics.
+* fix: correct TP-Space and clearance bugs, including unit mismatches, path-step logic, and obstacle-distance edge cases.
+* feat: improve navigation regression coverage and add a headless TP-Space example.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.4 (2026-09-04)
 ------------------
 * Merge pull request `#1388 <https://github.com/MRPT/mrpt/issues/1388>`_ from MRPT/test/coverage-nav-kinematics
