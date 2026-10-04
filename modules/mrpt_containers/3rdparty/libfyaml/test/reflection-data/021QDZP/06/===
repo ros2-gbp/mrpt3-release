@@ -1,1 +1,0 @@
-Constant array: char[5] 'HELLO' OK with { not-null-terminated: true }
