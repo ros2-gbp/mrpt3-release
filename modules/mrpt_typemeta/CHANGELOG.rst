@@ -2,6 +2,9 @@
 Changelog for package mrpt_typemeta
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.0 (2026-10-07)
+------------------
+
 3.4.0 (2026-10-04)
 ------------------
 * Contributors: Jose Luis Blanco-Claraco
