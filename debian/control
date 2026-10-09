@@ -1,0 +1,12 @@
+Source: ros-rolling-mrpt-common
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libgtest-dev <!nocheck>, ros-rolling-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-rolling-mrpt-common
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-ros-workspace
+Description: Common CMake scripts to all MRPT modules
