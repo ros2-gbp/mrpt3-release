@@ -2,6 +2,9 @@
 Changelog for package mrpt_nav
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.1 (2026-10-09)
+------------------
+
 3.5.0 (2026-10-07)
 ------------------
 * docs: fix nearly all Sphinx warnings
