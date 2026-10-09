@@ -1,0 +1,12 @@
+Source: ros-jazzy-mrpt-libapps-gui
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, libwxgtk3.2-dev, ros-jazzy-mrpt-gui, ros-jazzy-mrpt-libapps-cli, wx-common, ros-jazzy-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-mrpt-libapps-gui
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-mrpt-gui, ros-jazzy-mrpt-libapps-cli, ros-jazzy-ros-workspace
+Description: The MRPT C++ library mrpt_libapps_gui
