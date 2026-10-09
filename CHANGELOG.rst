@@ -2,6 +2,9 @@
 Changelog for package mrpt_examples_cpp
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.1 (2026-10-09)
+------------------
+
 3.5.0 (2026-10-07)
 ------------------
 * opengl: point/spot light shadows, light range, and emissive maps
