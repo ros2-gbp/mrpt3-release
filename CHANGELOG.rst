@@ -2,6 +2,9 @@
 Changelog for package mrpt_opengl
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.1 (2026-10-09)
+------------------
+
 3.5.0 (2026-10-07)
 ------------------
 * viz: CLight, lights in the scene graph
