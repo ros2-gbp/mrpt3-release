@@ -51,13 +51,24 @@ set(LIB_SOURCES
 
 set(LIB_UNIT_TEST_SOURCES
   tests/CDirectoryExplorer_unittest.cpp
+  tests/COutputLogger_unittest.cpp
+  tests/COutputLogger_extra_unittest.cpp
   tests/CTimeLogger_unittest.cpp
+  tests/CTimeLogger_extra_unittest.cpp
   tests/string_utils_unittest.cpp
   tests/filesystem_unittest.cpp
+  tests/filesystem_extra_unittest.cpp
+  tests/CFileSystemWatcher_unittest.cpp
+  tests/CObserver_unittest.cpp
+  tests/misc_system_unittest.cpp
+  tests/os_unittest.cpp
+  tests/datetime_format_unittest.cpp
   tests/thread_name_unittest.cpp
   tests/datetime_unittest.cpp
   tests/base64_unittest.cpp
   tests/crc_unittest.cpp
+  tests/md5_unittest.cpp
+  tests/CControlledRateTimer_unittest.cpp
 )
 
 set(LIB_PUBLIC_HEADERS
