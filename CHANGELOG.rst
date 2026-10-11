@@ -2,6 +2,81 @@
 Changelog for package mrpt_math
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.2 (2026-10-11)
+------------------
+
+3.5.1 (2026-10-09)
+------------------
+* Fix wrong CQuaternion::jacobian_rodrigues_from_quat() (`#1460 <https://github.com/MRPT/mrpt/issues/1460>`_)
+* Contributors: Jose Luis Blanco-Claraco
+
+3.5.0 (2026-10-07)
+------------------
+* Python bindings: docstrings for all members, regenerated .pyi stubs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.4.0 (2026-10-04)
+------------------
+* Python: commit generated .pyi type stubs for all modules
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.1 (2026-09-29)
+------------------
+* fresnel: fix large-x results when long double has a tiny LDBL_EPSILON.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.0 (2026-09-26)
+------------------
+* fix: qualify mrpt::format() calls to avoid ambiguity with std::format
+* Python bindings: datasets, maps, localization, sensors (+ fixes) (`#1429 <https://github.com/MRPT/mrpt/issues/1429>`_)
+* fix: test crashes on arm64 and armhf (`#1428 <https://github.com/MRPT/mrpt/issues/1428>`_)
+* fix(math): TPolygon2D::isConvex() sign flag must not be a plain char
+* changelogs
+* Merge pull request `#1417 <https://github.com/MRPT/mrpt/issues/1417>`_ from MRPT/fix/kdtree-capable-lock-order-and-optout
+* mrpt_math, mrpt_maps: fix KDTreeCapable lock-order inversion, add index opt-out
+* Contributors: Jose Luis Blanco-Claraco
+
+
+3.2.0 (2026-09-16)
+------------------
+* fix: resolve ROS buildfarm warnings and fix the real correctness issues they revealed.
+* feat: reconnect SIMD paths and remove dead math headers while expanding regression coverage.
+* fix: correct geometry, serialization, and matrix edge cases uncovered by the new tests.
+* feat: raise math/map/obs/slam test coverage with legacy-serialization and kNN regression checks.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
+3.1.3 (2026-08-12)
+------------------
+* mrpt_math: depend on nanoflann_vendor instead of nanoflann
+  The nanoflann rosdep key resolves to the distro's own libnanoflann-dev,
+  so it can never select a newer vendored version. Switch to the new
+  nanoflann_vendor ROS package name.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.2 (2026-07-07)
+------------------
+* Fix ``nanoflann`` declared as a build-only dependency in ``package.xml``,
+  which prevented it from being found by downstream packages' CMake
+  configuration on ROS build farms.
+* Increase unit test coverage.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.1 (2026-07-04)
+------------------
+* math: add nanoflann as rosdep dependency (more up-to-date than system libnanoflann-dev)
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.0 (2026-07-03)
+------------------
+* Merge pull request `#1376 <https://github.com/MRPT/mrpt/issues/1376>`_ from MRPT/port/2x-fixes-jul2026
+  Port 2.x fixes: COutputLogger thread-safety, octomap build flag
+* Merge pull request `#1374 <https://github.com/MRPT/mrpt/issues/1374>`_ from MRPT/feat/kdtree-save-load-index
+  feat(math): KDTreeCapable save/load of the KD-tree index (2D and 3D)
+* Contributors: Jose Luis Blanco-Claraco
+
 3.0.4 (2026-06-17)
 ------------------
 
