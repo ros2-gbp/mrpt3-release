@@ -2,6 +2,59 @@
 Changelog for package mrpt_poses
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.2 (2026-10-11)
+------------------
+
+3.5.1 (2026-10-09)
+------------------
+* Fix wrong CQuaternion::jacobian_rodrigues_from_quat() (`#1460 <https://github.com/MRPT/mrpt/issues/1460>`_)
+* Contributors: Jose Luis Blanco-Claraco
+
+3.5.0 (2026-10-07)
+------------------
+* docs: fix nearly all Sphinx warnings
+* Python bindings: docstrings for all members, regenerated .pyi stubs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.4.0 (2026-10-04)
+------------------
+* Python: commit generated .pyi type stubs for all modules
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.1 (2026-09-29)
+------------------
+
+3.3.0 (2026-09-26)
+------------------
+* fix: qualify mrpt::format() calls to avoid ambiguity with std::format
+* Python bindings: datasets, maps, localization, sensors (+ fixes) (`#1429 <https://github.com/MRPT/mrpt/issues/1429>`_)
+* changelogs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.2.0 (2026-09-16)
+------------------
+* refactor: align API and const-correctness updates with the broader 3.x cleanup pass.
+* fix: resolve ROS buildfarm warning issues and fix the underlying correctness bugs they surfaced.
+* fix: address stereo-rectification and pose-related regressions in the latest 3.x fixes.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
+3.1.3 (2026-08-12)
+------------------
+
+3.1.2 (2026-07-07)
+------------------
+
+3.1.1 (2026-07-04)
+------------------
+* add more mrpt_poses unit tests
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.0 (2026-07-03)
+------------------
+
 3.0.4 (2026-06-17)
 ------------------
 
