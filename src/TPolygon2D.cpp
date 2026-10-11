@@ -107,6 +107,10 @@ void TPolygon2D::getAsSegmentList(vector<TSegment2D>& v) const
 {
   size_t N = size();
   v.resize(N);
+  if (N == 0)
+  {
+    return;
+  }
   for (size_t i = 0; i < N - 1; i++) v[i] = TSegment2D(operator[](i), operator[](i + 1));
   v[N - 1] = TSegment2D(operator[](N - 1), operator[](0));
 }
@@ -130,7 +134,9 @@ bool TPolygon2D::isConvex() const
   getAsSegmentList(sgms);
   for (size_t i = 0; i < N; i++)
   {
-    char s = 0;
+    // Plain `char` is unsigned on the AArch64 ABI, so storing -1 in it wraps
+    // to 255 and the sign comparison below never matches; use `int` instead.
+    int s = 0;
     auto l = TLine2D(sgms[i]);
     for (size_t j = 0; j < N; j++)
     {

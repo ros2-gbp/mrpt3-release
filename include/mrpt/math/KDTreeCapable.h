@@ -16,15 +16,47 @@
 // nanoflann library:
 #include <mrpt/core/common.h>
 #include <mrpt/core/exceptions.h>
+#include <mrpt/core/format.h>
 #include <mrpt/math/TPoint2D.h>
 #include <mrpt/math/TPoint3D.h>
 
 #include <array>
 #include <atomic>
+#include <cstdint>
+#include <istream>
 #include <memory>  // unique_ptr
 #include <mutex>
 #include <nanoflann.hpp>
 #include <optional>
+#include <ostream>
+#include <string>
+
+// KDTreeSingleIndexAdaptorFlags::SkipInitialBuildIndex, required to load an
+// index without immediately rebuilding it, was added in nanoflann v1.4.3.
+// NOTE: nanoflann's own NANOFLANN_VERSION macro was NOT bumped for that
+// patch release (v1.4.2 and v1.4.3 both report 0x142), so a version check
+// right at that boundary cannot reliably tell them apart. Gate on a higher,
+// unambiguous threshold instead, at the cost of also disabling save/load on
+// the (rare) exact v1.4.3 release.
+#define MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD (NANOFLANN_VERSION >= 0x150)
+
+/** Feature-detection macro for the `mrpt::math::KDTreeCapable` KD-tree index
+ *  save/load API (`kdtree_save_index_2D()`/`kdtree_load_index_2D()` and their 3D
+ *  counterparts). Downstream code that must build against both this and older
+ *  MRPT versions can `#if defined(MRPT_HAS_KDTREE_SAVE_LOAD_INDEX)`.
+ *  Only defined when the underlying nanoflann version actually supports it
+ *  (see MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD); on older nanoflann versions the
+ *  save/load methods still exist but throw `std::runtime_error` at runtime. */
+#if MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD
+#define MRPT_HAS_KDTREE_SAVE_LOAD_INDEX 1
+#endif
+
+/** Feature-detection macro for `mrpt::math::KDTreeCapable::kdtree_disable()`,
+ *  the opt-out that lets a derived class declare this base class' cached
+ *  index unsupported for it. Downstream code that must build against both this
+ *  and older MRPT versions can `#if defined(MRPT_HAS_KDTREE_CAPABLE_DISABLE)`.
+ */
+#define MRPT_HAS_KDTREE_CAPABLE_DISABLE 1
 
 // Smooth transition to nanoflann>=1.5.0 for older versions:
 namespace nanoflann
@@ -101,9 +133,21 @@ class KDTreeCapable
 
   /// Constructor
   KDTreeCapable() = default;
-  KDTreeCapable(const KDTreeCapable&) : KDTreeCapable() {}
-  KDTreeCapable& operator=(const KDTreeCapable&)
+  /** Copy constructor: the cached index is NOT copied (it will be rebuilt on
+   *  demand). A kdtree_disable() opt-out is inherited from the source, but
+   *  never undone: see operator=(). */
+  KDTreeCapable(const KDTreeCapable& o) : m_kdtree_disabled_reason(o.m_kdtree_disabled_reason) {}
+  /** Copy assignment: as the copy constructor, and note that the
+   *  kdtree_disable() opt-out is *sticky*. Assigning from an object whose
+   *  index is enabled does NOT re-enable ours: an index a class declared
+   *  unsupported for itself must never come back to life through an
+   *  assignment. \sa kdtree_disable() */
+  KDTreeCapable& operator=(const KDTreeCapable& o)
   {
+    if (m_kdtree_disabled_reason.empty())
+    {
+      m_kdtree_disabled_reason = o.m_kdtree_disabled_reason;
+    }
     kdtree_mark_as_outdated();
     return *this;
   }
@@ -279,7 +323,9 @@ class KDTreeCapable
       float& outDistSqr2) const
   {
     float dmy1, dmy2, dmy3, dmy4;
-    kdTreeTwoClosestPoint2D(p0.x, p0.y, dmy1, dmy2, dmy3, dmy4, outDistSqr1, outDistSqr2);
+    kdTreeTwoClosestPoint2D(
+        static_cast<num_t>(p0.x), static_cast<num_t>(p0.y), dmy1, dmy2, dmy3, dmy4, outDistSqr1,
+        outDistSqr2);
     pOut1.x = static_cast<double>(dmy1);
     pOut1.y = static_cast<double>(dmy2);
     pOut2.x = static_cast<double>(dmy3);
@@ -337,6 +383,8 @@ class KDTreeCapable
       resultSet.init(&ret_indexes[0], &out_dist_sqr[0]);
 
       m_kdtree2d_data.index->findNeighbors(resultSet, &query_point[0], {});
+      ret_indexes.resize(resultSet.size());
+      out_dist_sqr.resize(resultSet.size());
     }
     else
     {
@@ -351,6 +399,11 @@ class KDTreeCapable
       THROW_EXCEPTION("RKNN search requires nanoflann>=1.5.1");
 #endif
     }
+
+    // Fewer than knn points may be returned (a small cloud, or a
+    // radius-limited search):
+    out_x.resize(ret_indexes.size());
+    out_y.resize(ret_indexes.size());
 
     for (size_t i = 0; i < ret_indexes.size(); i++)
     {
@@ -422,6 +475,8 @@ class KDTreeCapable
       resultSet.init(&out_idx[0], &out_dist_sqr[0]);
 
       m_kdtree2d_data.index->findNeighbors(resultSet, &query_point[0], {});
+      out_idx.resize(resultSet.size());
+      out_dist_sqr.resize(resultSet.size());
     }
     else
     {
@@ -581,6 +636,8 @@ class KDTreeCapable
       nanoflann::KNNResultSet<num_t> resultSet(knn);
       resultSet.init(&ret_indexes[0], &out_dist_sqr[0]);
       m_kdtree3d_data.index->findNeighbors(resultSet, &query_point[0], {});
+      ret_indexes.resize(resultSet.size());
+      out_dist_sqr.resize(resultSet.size());
     }
     else
     {
@@ -594,6 +651,12 @@ class KDTreeCapable
       THROW_EXCEPTION("RKNN search requires nanoflann>=1.5.1");
 #endif
     }
+
+    // Fewer than knn points may be returned (a small cloud, or a
+    // radius-limited search):
+    out_x.resize(ret_indexes.size());
+    out_y.resize(ret_indexes.size());
+    out_z.resize(ret_indexes.size());
 
     for (size_t i = 0; i < ret_indexes.size(); i++)
     {
@@ -658,6 +721,8 @@ class KDTreeCapable
       resultSet.init(&out_idx[0], &out_dist_sqr[0]);
 
       m_kdtree3d_data.index->findNeighbors(resultSet, &query_point[0], {});
+      out_idx.resize(resultSet.size());
+      out_dist_sqr.resize(resultSet.size());
     }
     else
     {
@@ -671,6 +736,12 @@ class KDTreeCapable
       THROW_EXCEPTION("RKNN search requires nanoflann>=1.5.1");
 #endif
     }
+
+    // Fewer than knn points may be returned (a small cloud, or a
+    // radius-limited search):
+    out_x.resize(out_idx.size());
+    out_y.resize(out_idx.size());
+    out_z.resize(out_idx.size());
 
     for (size_t i = 0; i < out_idx.size(); i++)
     {
@@ -730,7 +801,7 @@ class KDTreeCapable
     if (m_kdtree3d_data.m_num_points != 0)
     {
       const num_t xyz[3] = {x0, y0, z0};
-      m_kdtree3d_data.index->radiusSearch(&xyz[0], maxRadiusSqr, out_indices_dist, {});
+      (void)m_kdtree3d_data.index->radiusSearch(&xyz[0], maxRadiusSqr, out_indices_dist, {});
     }
     return out_indices_dist.size();
     MRPT_END
@@ -764,7 +835,7 @@ class KDTreeCapable
     if (m_kdtree2d_data.m_num_points != 0)
     {
       const num_t xyz[2] = {x0, y0};
-      m_kdtree2d_data.index->radiusSearch(&xyz[0], maxRadiusSqr, out_indices_dist, {});
+      (void)m_kdtree2d_data.index->radiusSearch(&xyz[0], maxRadiusSqr, out_indices_dist, {});
     }
     return out_indices_dist.size();
     MRPT_END
@@ -811,6 +882,8 @@ class KDTreeCapable
       nanoflann::KNNResultSet<num_t> resultSet(knn);
       resultSet.init(&out_idx[0], &out_dist_sqr[0]);
       m_kdtree3d_data.index->findNeighbors(resultSet, &query_point[0], {});
+      out_idx.resize(resultSet.size());
+      out_dist_sqr.resize(resultSet.size());
     }
     else
     {
@@ -842,6 +915,175 @@ class KDTreeCapable
   void kdTreeEnsureIndexBuilt3D() { rebuild_kdTree_3D(); }
   void kdTreeEnsureIndexBuilt2D() { rebuild_kdTree_2D(); }
 
+  /** @name KD-tree index (de)serialization
+   *  @{ */
+
+  /** Serializes the current 3D KD-tree index into the given binary stream,
+   *  building it first if needed. Returns `false` (writing nothing) if the map
+   *  has no points.
+   *
+   *  IMPORTANT: only the tree *topology* is written, NOT the point data. To
+   *  restore it later, first load the points so that `kdtree_get_point_count()`
+   *  and `kdtree_get_pt()` return the identical dataset, then call
+   *  `kdtree_load_index_3D()`. A point-count header is written so that
+   *  `kdtree_load_index_3D()` can detect a mismatched dataset.
+   *
+   *  The typical use case is caching the (costly to build) index alongside a
+   *  serialized point cloud, so it does not have to be rebuilt on load.
+   *
+   *  Requires nanoflann >= v1.5.0; throws `std::runtime_error` otherwise.
+   *  \sa kdtree_load_index_3D */
+  bool kdtree_save_index_3D([[maybe_unused]] std::ostream& out) const
+  {
+#if MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD
+    rebuild_kdTree_3D();  // ensure it is built (locks/unlocks internally)
+    std::lock_guard<std::mutex> lck(m_kdtree_mtx);
+    if (!m_kdtree3d_data.index) return false;  // no points: nothing to save
+    const uint64_t n = m_kdtree3d_data.m_num_points;
+    out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+    ASSERTMSG_(
+        static_cast<bool>(out), "kdtree_save_index_3D(): failed to write point-count header.");
+    m_kdtree3d_data.index->saveIndex(out);
+    ASSERTMSG_(static_cast<bool>(out), "kdtree_save_index_3D(): failed to write serialized index.");
+    return true;
+#else
+    THROW_EXCEPTION("kdtree_save_index_3D() requires nanoflann >= v1.5.0.");
+#endif
+  }
+
+  /** Restores a 3D KD-tree index previously written by `kdtree_save_index_3D()`,
+   *  avoiding the (costly) rebuild that would otherwise happen on the next query.
+   *
+   *  The associated points MUST already be present and identical to those used
+   *  when the index was saved; this is verified against the stored point-count
+   *  header (throws `std::runtime_error` on mismatch). On success the index is
+   *  marked up-to-date and will NOT be rebuilt on the next query, until the
+   *  derived class calls `kdtree_mark_as_outdated()` (e.g. if points change).
+   *
+   *  Requires nanoflann >= v1.5.0; throws `std::runtime_error` otherwise.
+   *  \sa kdtree_save_index_3D */
+  void kdtree_load_index_3D([[maybe_unused]] std::istream& in) const
+  {
+    kdtree_assert_enabled();
+#if MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD
+    using tree3d_t = typename TKDTreeDataHolder<3>::kdtree_index_t;
+
+    const size_t N = derived().kdtree_get_point_count();
+
+    uint64_t savedN = 0;
+    in.read(reinterpret_cast<char*>(&savedN), sizeof(savedN));
+    ASSERTMSG_(static_cast<bool>(in), "kdtree_load_index_3D(): failed to read point-count header.");
+    ASSERTMSG_(
+        savedN == static_cast<uint64_t>(N),
+        mrpt::format(
+            "kdtree_load_index_3D(): saved index point count (%llu) does not "
+            "match the currently loaded points (%zu). The points must be "
+            "restored before loading the index.",
+            static_cast<unsigned long long>(savedN), N));
+
+    // Build the new index into a local variable first, so the object is only
+    // mutated once the load is known to have succeeded (a failed read must
+    // never leave the cached trees cleared but "up-to-date").
+    std::unique_ptr<tree3d_t> newIndex;
+    if (N)
+    {
+      // SkipInitialBuildIndex: construct the index WITHOUT building it, since
+      // loadIndex() below installs the deserialized tree instead.
+      newIndex = std::make_unique<tree3d_t>(
+          3, derived(),
+          nanoflann::KDTreeSingleIndexAdaptorParams(
+              kdtree_search_params.leaf_max_size,
+              nanoflann::KDTreeSingleIndexAdaptorFlags::SkipInitialBuildIndex));
+      newIndex->loadIndex(in);
+      ASSERTMSG_(static_cast<bool>(in), "kdtree_load_index_3D(): failed to read serialized index.");
+    }
+
+    std::lock_guard<std::mutex> lck(m_kdtree_mtx);
+    m_kdtree2d_data.clear();
+    m_kdtree3d_data.clear();
+    m_kdtree3d_data.m_num_points = N;
+    m_kdtree3d_data.m_dim = 3;
+    m_kdtree3d_data.index = std::move(newIndex);
+    m_kdtree_is_uptodate = true;
+#else
+    THROW_EXCEPTION("kdtree_load_index_3D() requires nanoflann >= v1.5.0.");
+#endif
+  }
+
+  /** 2D counterpart of kdtree_save_index_3D(). Requires nanoflann >= v1.5.0;
+   *  throws `std::runtime_error` otherwise. \sa kdtree_load_index_2D */
+  bool kdtree_save_index_2D([[maybe_unused]] std::ostream& out) const
+  {
+#if MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD
+    rebuild_kdTree_2D();  // ensure it is built (locks/unlocks internally)
+    std::lock_guard<std::mutex> lck(m_kdtree_mtx);
+    if (!m_kdtree2d_data.index) return false;  // no points: nothing to save
+    const uint64_t n = m_kdtree2d_data.m_num_points;
+    out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+    ASSERTMSG_(
+        static_cast<bool>(out), "kdtree_save_index_2D(): failed to write point-count header.");
+    m_kdtree2d_data.index->saveIndex(out);
+    ASSERTMSG_(static_cast<bool>(out), "kdtree_save_index_2D(): failed to write serialized index.");
+    return true;
+#else
+    THROW_EXCEPTION("kdtree_save_index_2D() requires nanoflann >= v1.5.0.");
+#endif
+  }
+
+  /** 2D counterpart of kdtree_load_index_3D(). Requires nanoflann >= v1.5.0;
+   *  throws `std::runtime_error` otherwise. \sa kdtree_save_index_2D */
+  void kdtree_load_index_2D([[maybe_unused]] std::istream& in) const
+  {
+    kdtree_assert_enabled();
+#if MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD
+    using tree2d_t = typename TKDTreeDataHolder<2>::kdtree_index_t;
+
+    const size_t N = derived().kdtree_get_point_count();
+
+    uint64_t savedN = 0;
+    in.read(reinterpret_cast<char*>(&savedN), sizeof(savedN));
+    ASSERTMSG_(static_cast<bool>(in), "kdtree_load_index_2D(): failed to read point-count header.");
+    ASSERTMSG_(
+        savedN == static_cast<uint64_t>(N),
+        mrpt::format(
+            "kdtree_load_index_2D(): saved index point count (%llu) does not "
+            "match the currently loaded points (%zu). The points must be "
+            "restored before loading the index.",
+            static_cast<unsigned long long>(savedN), N));
+
+    // Build the new index into a local variable first, so the object is only
+    // mutated once the load is known to have succeeded (a failed read must
+    // never leave the cached trees cleared but "up-to-date").
+    std::unique_ptr<tree2d_t> newIndex;
+    if (N)
+    {
+      // SkipInitialBuildIndex: construct the index WITHOUT building it, since
+      // loadIndex() below installs the deserialized tree instead.
+      newIndex = std::make_unique<tree2d_t>(
+          2, derived(),
+          nanoflann::KDTreeSingleIndexAdaptorParams(
+              kdtree_search_params.leaf_max_size,
+              nanoflann::KDTreeSingleIndexAdaptorFlags::SkipInitialBuildIndex));
+      newIndex->loadIndex(in);
+      ASSERTMSG_(static_cast<bool>(in), "kdtree_load_index_2D(): failed to read serialized index.");
+    }
+
+    std::lock_guard<std::mutex> lck(m_kdtree_mtx);
+    m_kdtree2d_data.clear();
+    m_kdtree3d_data.clear();
+    m_kdtree2d_data.m_num_points = N;
+    m_kdtree2d_data.m_dim = 2;
+    m_kdtree2d_data.index = std::move(newIndex);
+    m_kdtree_is_uptodate = true;
+#else
+    THROW_EXCEPTION("kdtree_load_index_2D() requires nanoflann >= v1.5.0.");
+#endif
+  }
+
+#undef MRPT_NANOFLANN_HAS_KDTREE_SAVE_LOAD
+
+  /** @} */
+
   /* @} */
 
  protected:
@@ -851,6 +1093,37 @@ class KDTreeCapable
     std::lock_guard<std::mutex> lck(m_kdtree_mtx);
     m_kdtree_is_uptodate = false;
   }
+
+  /** Declares the cached index of this base class unsupported for this object,
+   *  so that every query method above throws `std::logic_error` carrying
+   *  `why` instead of silently building and searching it.
+   *
+   *  This is meant for classes that inherit from a `KDTreeCapable` for its
+   *  storage or its public interface, but that maintain their own index (e.g.
+   *  an incremental one) and for which the cached index built here would be
+   *  meaningless, unsafe, or both. Failing loudly is preferable to answering
+   *  queries over data this class cannot interpret.
+   *
+   *  Intended to be called once from the derived class' constructor; it is
+   *  then effectively immutable. There is no way back: a disabled index stays
+   *  disabled for the lifetime of the object, and neither copy construction
+   *  nor assignment can re-enable it (they can only propagate the opt-out).
+   *  Note that a derived class whose copy constructor default-constructs this
+   *  base has to call this again from it, as it would for any other
+   *  constructor.
+   *
+   *  \note Only the *index* is disabled. kdtree_mark_as_outdated() stays a
+   *        no-op-ish valid call, so that inherited mutators need no changes.
+   */
+  void kdtree_disable(const std::string& why)
+  {
+    ASSERTMSG_(!why.empty(), "kdtree_disable(): `why` cannot be empty.");
+    kdtree_mark_as_outdated();
+    m_kdtree_disabled_reason = why;
+  }
+
+  /** Whether this object's cached index is usable. \sa kdtree_disable() */
+  [[nodiscard]] bool kdtree_is_enabled() const { return m_kdtree_disabled_reason.empty(); }
 
  private:
   /** Internal structure with the KD-tree representation (mainly used to avoid
@@ -889,14 +1162,30 @@ class KDTreeCapable
   /** whether the KD tree needs to be rebuilt or not. */
   mutable std::atomic_bool m_kdtree_is_uptodate{false};
 
+  /** Empty unless kdtree_disable() was called. \sa kdtree_disable() */
+  std::string m_kdtree_disabled_reason;
+
+  /// Throws unless this object's cached index is usable. \sa kdtree_disable()
+  void kdtree_assert_enabled() const
+  {
+    if (m_kdtree_disabled_reason.empty())
+    {
+      return;
+    }
+    THROW_EXCEPTION_FMT(
+        "The mrpt::math::KDTreeCapable index is disabled for this class: %s",
+        m_kdtree_disabled_reason.c_str());
+  }
+
   /// Rebuild, if needed the KD-tree for 2D (nDims=2), 3D (nDims=3), ...
   /// asking the child class for the data points.
   void rebuild_kdTree_2D() const
   {
-    if (m_kdtree_is_uptodate)
+    if (m_kdtree_is_uptodate && m_kdtree2d_data.index)
     {
       return;
     }
+    kdtree_assert_enabled();
     std::lock_guard<std::mutex> lck(m_kdtree_mtx);
     using tree2d_t = typename TKDTreeDataHolder<2>::kdtree_index_t;
 
@@ -929,10 +1218,11 @@ class KDTreeCapable
   /// asking the child class for the data points.
   void rebuild_kdTree_3D() const
   {
-    if (m_kdtree_is_uptodate)
+    if (m_kdtree_is_uptodate && m_kdtree3d_data.index)
     {
       return;
     }
+    kdtree_assert_enabled();
     std::lock_guard<std::mutex> lck(m_kdtree_mtx);
     using tree3d_t = typename TKDTreeDataHolder<3>::kdtree_index_t;
 
