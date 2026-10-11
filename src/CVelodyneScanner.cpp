@@ -16,6 +16,7 @@
 #include <mrpt/core/reverse_bytes.h>
 #include <mrpt/hwdrivers/CGPSInterface.h>
 #include <mrpt/hwdrivers/CVelodyneScanner.h>
+#include <mrpt/hwdrivers/config.h>
 #include <mrpt/serialization/CArchive.h>
 #include <mrpt/system/datetime.h>  // timeDifference
 #include <mrpt/system/filesystem.h>
@@ -400,7 +401,7 @@ void CVelodyneScanner::initialize()
     // (1) Create LIDAR DATA socket
     // --------------------------------
     if (INVALID_SOCKET == (m_hDataSock = socket(PF_INET, SOCK_DGRAM, 0)))
-      THROW_EXCEPTION(format(
+      THROW_EXCEPTION(mrpt::format(
           "Error creating UDP socket:\n%s", mrpt::comms::net::getLastSocketErrorStr().c_str()));
 
     struct sockaddr_in bindAddr;
@@ -428,7 +429,7 @@ void CVelodyneScanner::initialize()
     // (2) Create LIDAR POSITION socket
     // --------------------------------
     if (INVALID_SOCKET == (m_hPositionSock = socket(PF_INET, SOCK_DGRAM, 0)))
-      THROW_EXCEPTION(format(
+      THROW_EXCEPTION(mrpt::format(
           "Error creating UDP socket:\n%s", mrpt::comms::net::getLastSocketErrorStr().c_str()));
 
     bindAddr.sin_port = htons(VELODYNE_POSITION_UDP_PORT);
@@ -623,9 +624,10 @@ bool CVelodyneScanner::receivePackets(
     mrpt::system::timestampToParts(mrpt::Clock::now(), parts, true);
     string sFilePostfix = "_";
     sFilePostfix += mrpt::format(
-        "%04u-%02u-%02u_%02uh%02um%02us", (unsigned int)parts.year, (unsigned int)parts.month,
-        (unsigned int)parts.day, (unsigned int)parts.hour, (unsigned int)parts.minute,
-        (unsigned int)parts.second);
+        "%04u-%02u-%02u_%02uh%02um%02us", static_cast<unsigned int>(parts.year),
+        static_cast<unsigned int>(parts.month), static_cast<unsigned int>(parts.day),
+        static_cast<unsigned int>(parts.hour), static_cast<unsigned int>(parts.minute),
+        static_cast<unsigned int>(parts.second));
     const string sFileName = m_pcap_output_file +
                              mrpt::system::fileNameStripInvalidChars(sFilePostfix) +
                              string(".pcap");
@@ -665,7 +667,7 @@ bool CVelodyneScanner::receivePackets(
       memcpy(
           &(packetBuffer[0]) + 42, reinterpret_cast<uint8_t*>(&out_data_pkt),
           CObservationVelodyneScan::PACKET_SIZE);
-      pcap_dump((u_char*)this->m_pcap_dumper, &header, &(packetBuffer[0]));
+      pcap_dump(static_cast<u_char*>(this->m_pcap_dumper), &header, &(packetBuffer[0]));
     }
     // Pos pkt:
     if (pos_pkt_timestamp != INVALID_TIMESTAMP)
@@ -678,7 +680,7 @@ bool CVelodyneScanner::receivePackets(
       memcpy(
           &(packetBuffer[0]) + 42, reinterpret_cast<uint8_t*>(&out_pos_pkt),
           CObservationVelodyneScan::POS_PACKET_SIZE);
-      pcap_dump((u_char*)this->m_pcap_dumper, &header, &(packetBuffer[0]));
+      pcap_dump(static_cast<u_char*>(this->m_pcap_dumper), &header, &(packetBuffer[0]));
     }
   }
 #endif
@@ -766,7 +768,7 @@ mrpt::system::TTimeStamp CVelodyneScanner::internal_receive_UDP_packet(
       if (retval < 0)  // poll() error?
       {
         if (errno != EINTR)
-          THROW_EXCEPTION(format(
+          THROW_EXCEPTION(mrpt::format(
               "Error in UDP poll():\n%s", mrpt::comms::net::getLastSocketErrorStr().c_str()));
       }
       if (retval == 0)  // poll() timeout?
