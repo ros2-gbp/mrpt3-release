@@ -12,15 +12,18 @@
  SPDX-License-Identifier: BSD-3-Clause
 */
 
-#include <mrpt/containers/bimap.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/core/lock_helper.h>
 #include <mrpt/opengl/Texture.h>
 #include <mrpt/opengl/opengl_api.h>
 
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <set>
+#include <thread>
+#include <tuple>
+#include <vector>
 
 using namespace mrpt::opengl;
 
@@ -50,8 +53,65 @@ void Texture::unloadTexture()
       });
 }
 
+namespace
+{
+/** What makes two texture uploads identical, so they can share one OpenGL
+ * texture. */
+struct SharedTextureKey
+{
+  const void* scope = nullptr;
+  const uint8_t* rgbData = nullptr;
+  const uint8_t* alphaData = nullptr;
+  int width = 0;
+  int height = 0;
+  int channels = 0;
+  size_t rowStride = 0;
+  bool generateMipMaps = true;
+  bool magnifyLinearFilter = true;
+  bool enableTransparency = false;
+  bool isColorData = true;
+  Texture::Wrapping wrappingModeS = Texture::Wrapping::Repeat;
+  Texture::Wrapping wrappingModeT = Texture::Wrapping::Repeat;
+
+  bool operator<(const SharedTextureKey& o) const
+  {
+    return std::tie(
+               scope, rgbData, alphaData, width, height, channels, rowStride, generateMipMaps,
+               magnifyLinearFilter, enableTransparency, isColorData, wrappingModeS, wrappingModeT) <
+           std::tie(
+               o.scope, o.rgbData, o.alphaData, o.width, o.height, o.channels, o.rowStride,
+               o.generateMipMaps, o.magnifyLinearFilter, o.enableTransparency, o.isColorData,
+               o.wrappingModeS, o.wrappingModeT);
+  }
+};
+
+SharedTextureKey makeSharedTextureKey(
+    const mrpt::img::CImage& rgb, const mrpt::img::CImage* alpha, const Texture::Options& o)
+{
+  SharedTextureKey k;
+  k.scope = o.shareScope;
+  k.rgbData = rgb.ptrLine<uint8_t>(0);
+  k.alphaData = alpha != nullptr ? alpha->ptrLine<uint8_t>(0) : nullptr;
+  k.width = static_cast<int>(rgb.getWidth());
+  k.height = static_cast<int>(rgb.getHeight());
+  k.channels = static_cast<int>(rgb.channels());
+  k.rowStride = rgb.getRowStride();
+  k.generateMipMaps = o.generateMipMaps;
+  k.magnifyLinearFilter = o.magnifyLinearFilter;
+  k.enableTransparency = o.enableTransparency;
+  k.isColorData = o.isColorData;
+  k.wrappingModeS = o.wrappingModeS;
+  k.wrappingModeT = o.wrappingModeT;
+  return k;
+}
+}  // namespace
+
 /** This class is a workaround to crashes and memory leaks caused by not
- * reserving and freeing opengl textures from the same thread. */
+ * reserving and freeing opengl textures from the same thread.
+ *
+ * Textures uploaded from the same image data within the same share scope are
+ * shared (see acquireSharedTexture()), so each texture name is reference
+ * counted and only deleted in OpenGL once its last user releases it. */
 class TextureResourceHandler
 {
  public:
@@ -62,7 +122,7 @@ class TextureResourceHandler
   }
 
   /// Return textureName
-  texture_name_t generateTextureID(const uint8_t* rgbDataForAssociation)
+  texture_name_t generateTextureID()
   {
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
     auto lck = mrpt::lockHelper(m_texturesMtx);
@@ -74,11 +134,7 @@ class TextureResourceHandler
     glGenTextures(1, &textureID);
     CHECK_OPENGL_ERROR_IN_DEBUG();
     m_textureReservedFrom[textureID] = std::this_thread::get_id();
-
-    if (rgbDataForAssociation != nullptr)
-    {
-      m_textureToRGBdata.insert(textureID, rgbDataForAssociation);
-    }
+    m_textureRefCount[textureID] = 1;
 
     if (MRPT_OPENGL_VERBOSE)
     {
@@ -91,20 +147,46 @@ class TextureResourceHandler
 #endif
   }
 
-  std::optional<texture_name_t> checkIfTextureAlreadyExists(const mrpt::img::CImage& rgb)
+  /** If a texture was already uploaded with this key, adds one user to it and
+   * returns its name. */
+  std::optional<texture_name_t> acquireSharedTexture(const SharedTextureKey& key)
   {
 #if (MRPT_HAS_OPENGL || MRPT_HAS_EGL)
     auto lck = mrpt::lockHelper(m_texturesMtx);
 
-    auto it = m_textureToRGBdata.getInverseMap().find(rgb.ptrLine<uint8_t>(0));
-    if (it != m_textureToRGBdata.getInverseMap().end())
+    auto it = m_sharedTextures.find(key);
+    if (it != m_sharedTextures.end())
     {
+      m_textureRefCount.at(it->second)++;
       return it->second;
     }
-
     return {};
 #else
     return {};
+#endif
+  }
+
+  /** Makes a texture just uploaded from these images available to later
+   * users of the same key. The images (shallow copies) are kept alive, so
+   * their pixel buffers cannot be reused by other images meanwhile. */
+  void registerSharedTexture(
+      texture_name_t name,
+      const SharedTextureKey& key,
+      const mrpt::img::CImage& rgb,
+      const mrpt::img::CImage* alpha)
+  {
+#if (MRPT_HAS_OPENGL || MRPT_HAS_EGL)
+    auto lck = mrpt::lockHelper(m_texturesMtx);
+
+    SharedTextureEntry e;
+    e.key = key;
+    e.rgb = mrpt::img::CImage(rgb, mrpt::img::SHALLOW_COPY);
+    if (alpha != nullptr)
+    {
+      e.alpha = mrpt::img::CImage(*alpha, mrpt::img::SHALLOW_COPY);
+    }
+    m_sharedTextures[key] = name;
+    m_sharedTextureEntries[name] = std::move(e);
 #endif
   }
 
@@ -117,7 +199,26 @@ class TextureResourceHandler
     if (MRPT_OPENGL_VERBOSE)
       std::cout << "[mrpt releaseTextureID] textureName: " << texName << "\n";
 
-    m_destroyQueue[m_textureReservedFrom.at(texName)].push_back(texName);
+    // Whoever re-assigns this image from now on gets a fresh upload: callers
+    // release a texture before re-uploading an image whose content changed.
+    unregisterSharedTexture(texName);
+
+    // Unknown names are ignored: this runs from destructors, so it must not throw.
+    auto itCount = m_textureRefCount.find(texName);
+    if (itCount == m_textureRefCount.end())
+    {
+      return;
+    }
+    if (--itCount->second > 0)
+    {
+      return;  // still in use by others
+    }
+    m_textureRefCount.erase(itCount);
+
+    auto itFrom = m_textureReservedFrom.find(texName);
+    m_destroyQueue[itFrom->second].push_back(texName);
+    m_textureReservedFrom.erase(itFrom);
+
     processDestroyQueue();
     MRPT_END
 #endif
@@ -133,6 +234,15 @@ class TextureResourceHandler
 #endif
   }
 
+  void unregisterSharedTexture(texture_name_t name)
+  {
+    if (auto it = m_sharedTextureEntries.find(name); it != m_sharedTextureEntries.end())
+    {
+      m_sharedTextures.erase(it->second.key);
+      m_sharedTextureEntries.erase(it);
+    }
+  }
+
   void processDestroyQueue()
   {
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
@@ -145,13 +255,9 @@ class TextureResourceHandler
       glDeleteTextures(static_cast<GLsizei>(lst.size()), lst.data());
       CHECK_OPENGL_ERROR_IN_DEBUG();
 
-      // delete in rgb data container too:
       for (const auto id : lst)
       {
-        if (m_textureToRGBdata.hasKey(id))
-        {
-          m_textureToRGBdata.erase_by_key(id);
-        }
+        unregisterSharedTexture(id);
       }
 
       if (MRPT_OPENGL_VERBOSE)
@@ -174,23 +280,28 @@ class TextureResourceHandler
   }
 
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  struct SharedTextureEntry
+  {
+    SharedTextureKey key;
+    mrpt::img::CImage rgb;
+    mrpt::img::CImage alpha;
+  };
+
   std::mutex m_texturesMtx;
   std::map<GLuint, std::thread::id> m_textureReservedFrom;
+  std::map<GLuint, int> m_textureRefCount;  //!< Number of users of each texture name
   std::map<std::thread::id, std::vector<GLuint>> m_destroyQueue;
-  mrpt::containers::bimap<GLuint, const uint8_t*> m_textureToRGBdata;
+  std::map<SharedTextureKey, GLuint> m_sharedTextures;
+  std::map<GLuint, SharedTextureEntry> m_sharedTextureEntries;
   GLint m_maxTextureUnits;
 #endif
 };
 
-std::optional<texture_name_t> checkIfTextureAlreadyExists(const mrpt::img::CImage& rgb)
-{
-  return TextureResourceHandler::Instance().checkIfTextureAlreadyExists(rgb);
-}
-
 /// Returns: [texture name, texture unit]
-texture_name_t mrpt::opengl::getNewTextureNumber(const uint8_t* optionalRgbDataForAssociation)
+texture_name_t mrpt::opengl::getNewTextureNumber(
+    [[maybe_unused]] const uint8_t* optionalRgbDataForAssociation)
 {
-  return TextureResourceHandler::Instance().generateTextureID(optionalRgbDataForAssociation);
+  return TextureResourceHandler::Instance().generateTextureID();
 }
 
 void mrpt::opengl::releaseTextureName(const texture_name_t& t)
@@ -303,9 +414,20 @@ void Texture::internalAssignImage_2D(
     in_alpha->forceLoad();
   }
 
+  // Drop the reference held from a previous assignment, if any, so each
+  // reference is released exactly once:
+  if (get().has_value())
+  {
+    releaseTextureName(get()->name);
+    get().reset();
+  }
+
   // Check if we already have this texture loaded in GPU and avoid creating
   // duplicated texture ID:
-  const auto existingTextureId = checkIfTextureAlreadyExists(*in_rgb);
+  const auto sharedKey = makeSharedTextureKey(*in_rgb, in_alpha, o);
+  const auto existingTextureId =
+      o.shareScope != nullptr ? TextureResourceHandler::Instance().acquireSharedTexture(sharedKey)
+                              : std::optional<texture_name_t>();
   if (existingTextureId.has_value())
   {
     get() = existingTextureId.value();
@@ -365,8 +487,13 @@ void Texture::internalAssignImage_2D(
   }
 
   // allocate texture names:
-  get() = getNewTextureNumber(in_rgb->ptrLine<uint8_t>(0));
+  get() = getNewTextureNumber();
   get()->unit = textureUnit;
+  if (o.shareScope != nullptr)
+  {
+    TextureResourceHandler::Instance().registerSharedTexture(
+        get()->name, sharedKey, *in_rgb, in_alpha);
+  }
 
   // activate the texture unit first before binding texture
   bindAsTexture2D();
@@ -637,7 +764,12 @@ void Texture::assignCubeImages(
   }
 
   // allocate texture "name" (ID):
-  get() = getNewTextureNumber(nullptr); /* no cached img for cube textures */
+  if (get().has_value())
+  {
+    releaseTextureName(get()->name);
+    get().reset();
+  }
+  get() = getNewTextureNumber();
 
   // activate the texture unit first before binding texture
   bindAsCubeTexture();

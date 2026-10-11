@@ -51,6 +51,20 @@ set(LIB_SOURCES
 
 set(LIB_UNIT_TEST_SOURCES
   tests/CFBORender_unittest.cpp
+  tests/CFBORender_SolidPrimitives_unittest.cpp
+  tests/CFBORender_LinePointPrimitives_unittest.cpp
+  tests/CFBORender_ExtraEllipsoidsAndMesh_unittest.cpp
+  tests/CFBORender_ScreenSpace_unittest.cpp
+  tests/CFBORender_ViewportFeatures_unittest.cpp
+  tests/CFBORender_SceneUpdates_unittest.cpp
+  tests/CFBORender_SharedTexture_unittest.cpp
+  tests/CFBORender_NormalMap_unittest.cpp
+  tests/CFBORender_Lighting_unittest.cpp
+  tests/CFBORender_AlphaMode_unittest.cpp
+  tests/CFBORender_SceneGraphEdits_unittest.cpp
+  tests/CFBORender_CullingAndOrdering_unittest.cpp
+  tests/CFBORender_LensDistortion_unittest.cpp
+  tests/CFBORender_Instancing_unittest.cpp
   tests/TRenderMatrices_unittest.cpp
 )
 
@@ -95,6 +109,7 @@ mrpt_add_library(
     mrpt_img
   UNITTEST_LINK_LIBRARIES
     Eigen3::Eigen
+    ${MRPT_OPENGL_LIBS}  # tests query GL state directly
 )
 
 mrpt_add_python_module(opengl python_bindings/${PROJECT_NAME}_py.cpp)

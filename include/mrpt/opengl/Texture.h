@@ -18,6 +18,7 @@
 
 #include <array>
 #include <optional>
+#include <utility>
 
 namespace mrpt::opengl
 {
@@ -50,8 +51,17 @@ class Texture
 
   Texture(const Texture&) = delete;
   Texture& operator=(const Texture&) = delete;
-  Texture(Texture&&) noexcept = default;
-  Texture& operator=(Texture&&) noexcept = default;
+  Texture(Texture&& o) noexcept : m_tex(std::move(o.m_tex)) { o.m_tex.clear(); }
+  Texture& operator=(Texture&& o) noexcept
+  {
+    if (this != &o)
+    {
+      unloadTexture();
+      m_tex = std::move(o.m_tex);
+      o.m_tex.clear();
+    }
+    return *this;
+  }
 
   enum class Wrapping : uint8_t
   {
@@ -87,6 +97,16 @@ class Texture
      * data textures like normal maps.
      */
     bool isColorData = true;
+
+    /** Textures assigned from the same image (same pixel buffer, alpha image
+     * and options) are uploaded once and shared, but only among those with
+     * the same non-null shareScope. A scope must only be used with one OpenGL
+     * context, since texture names are not valid in other contexts (unless
+     * explicitly shared). nullptr (default): the texture is never shared.
+     * CompiledScene uses the EGL context it is compiled in, or one scope for
+     * all non-EGL contexts.
+     */
+    const void* shareScope = nullptr;
   };
 
   /** This is how an 2D texture image is loaded into this object, and a
@@ -145,7 +165,11 @@ class Texture
 
 // Normally users should not need to call these, but they are exposed just in
 // case they are useful someday.
-texture_name_t getNewTextureNumber(const uint8_t* optionalRgbDataForAssociation);
+
+/** Creates a new OpenGL texture name.
+ * \note The argument is ignored: use Texture::Options::shareScope to share
+ * textures among users of the same image. */
+texture_name_t getNewTextureNumber(const uint8_t* optionalRgbDataForAssociation = nullptr);
 void releaseTextureName(const texture_name_t& t);
 
 }  // namespace mrpt::opengl

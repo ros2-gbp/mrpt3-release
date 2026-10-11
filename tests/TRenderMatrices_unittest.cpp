@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 #include <mrpt/opengl/TRenderMatrices.h>
 #include <mrpt/poses/CPose3D.h>
+#include <mrpt/viz/TLightParameters.h>
 
 #include <Eigen/Dense>
 
@@ -191,4 +192,69 @@ TEST(OpenGL, TRenderMatrices_orthographicNDC)
 
   EXPECT_NEAR(cornerNdc[0], 1.0f, 1e-5f);
   EXPECT_NEAR(cornerNdc[1], 1.0f, 1e-5f);
+}
+TEST(OpenGL, TRenderMatrices_lookAtWithoutTranslation)
+{
+  // The view matrix without translation is used by sky boxes: it must be the
+  // pure rotation of the full one, with no translation and no leftovers.
+  for (const auto& eye :
+       {mrpt::math::TVector3D(3, 4, 5), mrpt::math::TVector3D(-100, 20, 1),
+        mrpt::math::TVector3D(0.5, -7, 30)})
+  {
+    mrpt::math::CMatrixFloat44 noTrans;
+    noTrans.setConstant(1234.5f);  // to detect entries left unset
+    const auto full = mrpt::opengl::TRenderMatrices::LookAt(
+        eye, mrpt::math::TVector3D(0, 0, 0), mrpt::math::TVector3D(0, 0, 1), &noTrans);
+
+    for (int r = 0; r < 4; r++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        EXPECT_EQ(noTrans(r, c), full(r, c)) << "rotation part at " << r << "," << c;
+      }
+    }
+    EXPECT_EQ(noTrans(0, 3), 0.0f);
+    EXPECT_EQ(noTrans(1, 3), 0.0f);
+    EXPECT_EQ(noTrans(2, 3), 0.0f);
+    EXPECT_EQ(noTrans(3, 3), 1.0f);
+
+    // Degenerate inputs are rejected (eye at the target, or up parallel to the
+    // viewing direction):
+    EXPECT_ANY_THROW(
+        [[maybe_unused]] const auto m =
+            mrpt::opengl::TRenderMatrices::LookAt(eye, eye, mrpt::math::TVector3D(0, 0, 1)));
+    EXPECT_ANY_THROW(
+        [[maybe_unused]] const auto m = mrpt::opengl::TRenderMatrices::LookAt(
+            mrpt::math::TVector3D(0, 0, 5), mrpt::math::TVector3D(0, 0, 0),
+            mrpt::math::TVector3D(0, 0, 1)));
+  }
+}
+
+TEST(OpenGL, TRenderMatrices_shadowCascadesCoverTheShadowDistance)
+{
+  mrpt::opengl::TRenderMatrices rm;
+  rm.viewport_width = 640;
+  rm.viewport_height = 480;
+  rm.FOV = 60.0f;
+  rm.eyeDistance = 10.0;
+  rm.eye = {10, 0, 2};
+  rm.pointing = {0, 0, 0};
+  rm.up = {0, 0, 1};
+  rm.computeProjectionMatrix(0.1f, 1000.0f);
+  rm.computeViewMatrix();
+
+  mrpt::viz::TLightParameters lp;
+  lp.shadow_cascades = 3;
+
+  // Default: 4 times the orbit distance
+  rm.computeCascadedLightProjectionMatrices(0.1f, 1000.0f, lp, 2048);
+  EXPECT_NEAR(rm.cascade_far_planes[2], 40.0f, 1e-3f);
+
+  // An explicit distance:
+  rm.computeCascadedLightProjectionMatrices(0.1f, 1000.0f, lp, 2048, 25.0f);
+  EXPECT_NEAR(rm.cascade_far_planes[2], 25.0f, 1e-3f);
+
+  // ... never beyond the far clip distance:
+  rm.computeCascadedLightProjectionMatrices(0.1f, 20.0f, lp, 2048, 25.0f);
+  EXPECT_NEAR(rm.cascade_far_planes[2], 20.0f, 1e-3f);
 }

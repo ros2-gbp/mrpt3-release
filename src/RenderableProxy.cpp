@@ -12,17 +12,65 @@
  SPDX-License-Identifier: BSD-3-Clause
 */
 
+#include <mrpt/core/bits_math.h>
 #include <mrpt/opengl/DefaultShaders.h>
 #include <mrpt/opengl/RenderableProxy.h>
 #include <mrpt/opengl/Shader.h>
 #include <mrpt/opengl/Texture.h>
 #include <mrpt/opengl/opengl_api.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 
 using namespace mrpt::opengl;
 using namespace mrpt::math;
 using namespace mrpt::img;
+
+namespace
+{
+template <class POINT>
+std::optional<TBoundingBoxf> boundingBoxOf(const std::vector<POINT>& pts)
+{
+  if (pts.empty())
+  {
+    return std::nullopt;
+  }
+  auto bb = TBoundingBoxf::PlusMinusInfinity();
+  for (const auto& p : pts)
+  {
+    bb.updateWithPoint({p.x, p.y, p.z});
+  }
+  return bb;
+}
+
+bool anyTranslucent(const std::vector<TColor>& colors)
+{
+  for (const auto& c : colors)
+  {
+    if (c.A != 0xff)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Points and lines without per-vertex colors use the object color: the
+ * color attribute is disabled in their VAO, so its constant value is used. */
+void setConstantVertexColor(const TColor& c)
+{
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  glVertexAttrib4f(1, c.R / 255.0f, c.G / 255.0f, c.B / 255.0f, c.A / 255.0f);
+#endif
+}
+}  // namespace
+
+RenderableProxy::RenderableProxy()
+{
+  static std::atomic<uint64_t> lastId{0};
+  m_id = ++lastId;
+}
 
 // ============================================================================
 // RenderableProxy static helper implementations
@@ -108,6 +156,92 @@ void RenderableProxy::uploadInt(const RenderContext& rc, const char* uniformName
 #endif
 }
 
+void RenderableProxy::uploadLights(const RenderContext& rc)
+{
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  if (!rc.shader || !rc.lights)
+  {
+    return;
+  }
+
+  const auto& lights = rc.lights->lights;
+  const int numLights = static_cast<int>(std::min<size_t>(lights.size(), mrpt::viz::MAX_LIGHTS));
+
+  if (rc.shader->hasUniform("num_lights"))
+  {
+    uploadInt(rc, "num_lights", numLights);
+  }
+  if (rc.shader->hasUniform("light_ambient"))
+  {
+    uploadFloat(rc, "light_ambient", rc.lights->ambient);
+  }
+  if (rc.shader->hasUniform("ambient_sky_color"))
+  {
+    const auto& c = rc.lights->ambientSkyColor;
+    uploadVector3(rc, "ambient_sky_color", mrpt::math::TVector3Df(c.R, c.G, c.B));
+  }
+  if (rc.shader->hasUniform("ambient_ground_color"))
+  {
+    const auto& c = rc.lights->ambientGroundColor;
+    uploadVector3(rc, "ambient_ground_color", mrpt::math::TVector3Df(c.R, c.G, c.B));
+  }
+
+  if (numLights == 0 || !rc.shader->hasUniform("light_type"))
+  {
+    return;
+  }
+
+  // Build arrays and upload via raw GL calls
+  int types[mrpt::viz::MAX_LIGHTS] = {};
+  float colors[mrpt::viz::MAX_LIGHTS * 3] = {};
+  float diffuses[mrpt::viz::MAX_LIGHTS] = {};
+  float speculars[mrpt::viz::MAX_LIGHTS] = {};
+  float directions[mrpt::viz::MAX_LIGHTS * 3] = {};
+  float positions[mrpt::viz::MAX_LIGHTS * 3] = {};
+  float attenuations[mrpt::viz::MAX_LIGHTS * 3] = {};
+  float ranges[mrpt::viz::MAX_LIGHTS] = {};
+  float spotCutoffs[mrpt::viz::MAX_LIGHTS * 2] = {};
+
+  for (int i = 0; i < numLights; i++)
+  {
+    const auto& l = lights[i];
+    types[i] = static_cast<int>(l.type);
+    colors[i * 3 + 0] = l.color.R;
+    colors[i * 3 + 1] = l.color.G;
+    colors[i * 3 + 2] = l.color.B;
+    diffuses[i] = l.diffuse;
+    speculars[i] = l.specular;
+    directions[i * 3 + 0] = l.direction.x;
+    directions[i * 3 + 1] = l.direction.y;
+    directions[i * 3 + 2] = l.direction.z;
+    positions[i * 3 + 0] = l.position.x;
+    positions[i * 3 + 1] = l.position.y;
+    positions[i * 3 + 2] = l.position.z;
+    attenuations[i * 3 + 0] = l.attenuation_constant;
+    attenuations[i * 3 + 1] = l.attenuation_linear;
+    attenuations[i * 3 + 2] = l.attenuation_quadratic;
+    ranges[i] = std::max(0.0f, l.range);
+    spotCutoffs[i * 2 + 0] = std::cos(mrpt::DEG2RAD(l.spot_inner_cutoff_deg));
+    spotCutoffs[i * 2 + 1] = std::cos(mrpt::DEG2RAD(l.spot_outer_cutoff_deg));
+  }
+
+  glUniform1iv(rc.shader->uniformId("light_type"), numLights, types);
+  glUniform3fv(rc.shader->uniformId("light_color"), numLights, colors);
+  glUniform1fv(rc.shader->uniformId("light_diffuse"), numLights, diffuses);
+  glUniform1fv(rc.shader->uniformId("light_specular"), numLights, speculars);
+  glUniform3fv(rc.shader->uniformId("light_direction"), numLights, directions);
+  glUniform3fv(rc.shader->uniformId("light_position"), numLights, positions);
+  glUniform3fv(rc.shader->uniformId("light_attenuation"), numLights, attenuations);
+  if (rc.shader->hasUniform("light_range"))
+  {
+    glUniform1fv(rc.shader->uniformId("light_range"), numLights, ranges);
+  }
+  glUniform2fv(rc.shader->uniformId("light_spot_cutoff"), numLights, spotCutoffs);
+#else
+  (void)rc;
+#endif
+}
+
 // ============================================================================
 // PointsProxyBase implementation
 // ============================================================================
@@ -134,6 +268,10 @@ void PointsProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   const auto& colors = pointsObj->shaderPointsVertexColorBuffer();
 
   m_pointCount = vertices.size();
+  m_localBBox = boundingBoxOf(vertices);
+  m_hasColorBuffer = !colors.empty() && colors.size() == m_pointCount;
+  m_baseColor = sourceObj->getColor_u8();
+  m_transparent = m_hasColorBuffer ? anyTranslucent(colors) : m_baseColor.A != 0xff;
   if (m_pointCount == 0)
   {
     return;
@@ -152,7 +290,7 @@ void PointsProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(TPoint3Df), nullptr);
 
   // Upload colors (if available)
-  if (!colors.empty() && colors.size() == m_pointCount)
+  if (m_hasColorBuffer)
   {
     m_colorBuffer.createOnce();
     m_colorBuffer.bind();
@@ -171,9 +309,6 @@ void PointsProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   // Unbind
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-  // Invalidate cached bounding box
-  m_cachedBBox.reset();
 
   CHECK_OPENGL_ERROR_IN_DEBUG();
 
@@ -202,6 +337,10 @@ void PointsProxyBase::render([[maybe_unused]] const RenderContext& rc) const
   }
   m_vao.bind();
 
+  if (!m_hasColorBuffer)
+  {
+    setConstantVertexColor(m_baseColor);
+  }
   glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(m_pointCount));
 
   glBindVertexArray(0);
@@ -210,14 +349,6 @@ void PointsProxyBase::render([[maybe_unused]] const RenderContext& rc) const
 
   MRPT_END
 #endif
-}
-
-TBoundingBoxf PointsProxyBase::getBoundingBoxLocal() const
-{
-  if (m_cachedBBox.has_value()) return m_cachedBBox.value();
-
-  // Return empty bbox if no points
-  return TBoundingBoxf();
 }
 
 // ============================================================================
@@ -253,6 +384,10 @@ void LinesProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   const auto& colors = linesObj->shaderLinesVertexColorBuffer();
 
   m_vertexCount = vertices.size();
+  m_localBBox = boundingBoxOf(vertices);
+  m_hasColorBuffer = !colors.empty() && colors.size() == m_vertexCount;
+  m_baseColor = sourceObj->getColor_u8();
+  m_transparent = m_hasColorBuffer ? anyTranslucent(colors) : m_baseColor.A != 0xff;
   if (m_vertexCount == 0)
   {
     return;
@@ -272,7 +407,7 @@ void LinesProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(TPoint3Df), nullptr);
 
   // Upload colors
-  if (!colors.empty() && colors.size() == m_vertexCount)
+  if (m_hasColorBuffer)
   {
     m_colorBuffer.createOnce();
     m_colorBuffer.bind();
@@ -290,8 +425,6 @@ void LinesProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   // Unbind
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-  m_cachedBBox.reset();
 
   CHECK_OPENGL_ERROR_IN_DEBUG();
 
@@ -330,6 +463,10 @@ void LinesProxyBase::render([[maybe_unused]] const RenderContext& rc) const
 
   m_vao.bind();
 
+  if (!m_hasColorBuffer)
+  {
+    setConstantVertexColor(m_baseColor);
+  }
   glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(m_vertexCount));
 
   glBindVertexArray(0);
@@ -345,13 +482,6 @@ void LinesProxyBase::render([[maybe_unused]] const RenderContext& rc) const
 
   MRPT_END
 #endif
-}
-
-TBoundingBoxf LinesProxyBase::getBoundingBoxLocal() const
-{
-  if (m_cachedBBox.has_value()) return m_cachedBBox.value();
-
-  return TBoundingBoxf();
 }
 
 // ============================================================================
@@ -389,6 +519,8 @@ void TrianglesProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   m_triangleCount = triangles.size();
   if (m_triangleCount == 0)
   {
+    m_localBBox.reset();
+    m_transparent = false;
     return;
   }
 
@@ -453,8 +585,8 @@ void TrianglesProxyBase::compile(const mrpt::viz::CVisualObject* sourceObj)
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-  // Invalidate cached bounding box
-  m_cachedBBox.reset();
+  m_localBBox = boundingBoxOf(vertices);
+  m_transparent = anyTranslucent(colors);
 
   CHECK_OPENGL_ERROR_IN_DEBUG();
 
@@ -481,19 +613,27 @@ void TrianglesProxyBase::render([[maybe_unused]] const RenderContext& rc) const
     return;
   }
 
-  // Setup face culling
+  // Setup face culling. Culling only affects what the camera sees: all faces
+  // cast shadows, so it is disabled while rendering the shadow map.
   bool cullingWasEnabled = glIsEnabled(GL_CULL_FACE);
   GLint previousCullMode = GL_BACK;
+  glGetIntegerv(GL_CULL_FACE_MODE, &previousCullMode);
+  const bool isShadowMap1stPass = rc.shader_id == DefaultShaderID::TRIANGLES_SHADOW_1ST ||
+                                  rc.shader_id == DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_1ST;
+  const auto cullFace = isShadowMap1stPass ? mrpt::viz::TCullFace::NONE : m_cullFace;
 
-  if (m_cullFace != mrpt::viz::TCullFace::NONE)
+  if (cullFace != mrpt::viz::TCullFace::NONE)
   {
     glEnable(GL_CULL_FACE);
-    glGetIntegerv(GL_CULL_FACE_MODE, &previousCullMode);
 
-    if (m_cullFace == mrpt::viz::TCullFace::BACK)
+    if (cullFace == mrpt::viz::TCullFace::BACK)
+    {
       glCullFace(GL_BACK);
-    else if (m_cullFace == mrpt::viz::TCullFace::FRONT)
+    }
+    else if (cullFace == mrpt::viz::TCullFace::FRONT)
+    {
       glCullFace(GL_FRONT);
+    }
   }
   else
   {
@@ -503,7 +643,35 @@ void TrianglesProxyBase::render([[maybe_unused]] const RenderContext& rc) const
   m_vao.bind();
 
   const GLsizei vertexCount = static_cast<GLsizei>(m_triangleCount * 3);
-  glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+  if (rc.instanceCount > 0 && rc.instanceBuffer != nullptr)
+  {
+    // Per-instance model matrices, one column per attribute location. The
+    // arrays are disabled again afterwards, so regular draws of this VAO use
+    // the constant (identity) value.
+    rc.instanceBuffer->bind();
+    constexpr GLsizei stride = 16 * sizeof(float);
+    for (int col = 0; col < 4; col++)
+    {
+      const GLuint loc = INSTANCE_MATRIX_ATTRIB_LOCATION + col;
+      glEnableVertexAttribArray(loc);
+      glVertexAttribPointer(
+          loc, 4, GL_FLOAT, GL_FALSE, stride,
+          reinterpret_cast<const void*>(rc.instanceBufferOffset + col * 4 * sizeof(float)));
+      glVertexAttribDivisor(loc, 1);
+    }
+    glDrawArraysInstanced(GL_TRIANGLES, 0, vertexCount, rc.instanceCount);
+    for (int col = 0; col < 4; col++)
+    {
+      const GLuint loc = INSTANCE_MATRIX_ATTRIB_LOCATION + col;
+      glVertexAttribDivisor(loc, 0);
+      glDisableVertexAttribArray(loc);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+  }
+  else
+  {
+    glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+  }
 
   glBindVertexArray(0);
 
@@ -546,13 +714,6 @@ shader_id_t TrianglesProxyBase::selectShader(bool isShadowMapPass) const
   }
 }
 
-TBoundingBoxf TrianglesProxyBase::getBoundingBoxLocal() const
-{
-  if (m_cachedBBox.has_value()) return m_cachedBBox.value();
-
-  return TBoundingBoxf();
-}
-
 // ============================================================================
 // TexturedTrianglesProxyBase implementation
 // ============================================================================
@@ -590,6 +751,8 @@ void TexturedTrianglesProxyBase::compile(const mrpt::viz::CVisualObject* sourceO
   m_triangleCount = triangles.size();
   if (m_triangleCount == 0)
   {
+    m_localBBox.reset();
+    m_transparent = false;
     return;
   }
 
@@ -600,43 +763,43 @@ void TexturedTrianglesProxyBase::compile(const mrpt::viz::CVisualObject* sourceO
   std::vector<TVector3Df> normals;
   std::vector<TColor> colors;
   std::vector<mrpt::math::TPoint2Df> texCoords;
-  std::vector<TVector3Df> tangents;
+  // Tangents as (x,y,z,w), with w=+1/-1 the handedness of the UV mapping
+  std::vector<float> tangents;
 
   vertices.reserve(vertexCount);
   normals.reserve(vertexCount);
   colors.reserve(vertexCount);
   texCoords.reserve(vertexCount);
-  tangents.reserve(vertexCount);
+  tangents.reserve(vertexCount * 4);
 
   for (const auto& tri : triangles)
   {
-    // Check if we need to compute tangents from UV (fallback for zero tangents)
-    TVector3Df triTangent = tri.vertices[0].tangent;
-    const bool tangentIsZero = (triTangent.x == 0 && triTangent.y == 0 && triTangent.z == 0);
+    // Tangent and bitangent from edge vectors and UV deltas. The tangent is a
+    // fallback for vertices without one; the bitangent gives the handedness of
+    // the UV mapping (mirrored mappings need the bitangent flipped).
+    const auto& p0 = tri.vertices[0].xyzrgba.pt;
+    const auto& p1 = tri.vertices[1].xyzrgba.pt;
+    const auto& p2 = tri.vertices[2].xyzrgba.pt;
+    const TVector3Df e1(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
+    const TVector3Df e2(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
+    const float du1 = tri.vertices[1].uv.x - tri.vertices[0].uv.x;
+    const float dv1 = tri.vertices[1].uv.y - tri.vertices[0].uv.y;
+    const float du2 = tri.vertices[2].uv.x - tri.vertices[0].uv.x;
+    const float dv2 = tri.vertices[2].uv.y - tri.vertices[0].uv.y;
+    const float det = du1 * dv2 - du2 * dv1;
 
-    if (tangentIsZero)
+    TVector3Df triTangent(1.0f, 0.0f, 0.0f);  // degenerate UV: arbitrary tangent
+    float handedness = 1.0f;
+    if (std::abs(det) > 1e-12f)
     {
-      // Compute tangent from edge vectors and UV deltas
-      const auto& p0 = tri.vertices[0].xyzrgba.pt;
-      const auto& p1 = tri.vertices[1].xyzrgba.pt;
-      const auto& p2 = tri.vertices[2].xyzrgba.pt;
-      const float e1x = p1.x - p0.x, e1y = p1.y - p0.y, e1z = p1.z - p0.z;
-      const float e2x = p2.x - p0.x, e2y = p2.y - p0.y, e2z = p2.z - p0.z;
-      const float du1 = tri.vertices[1].uv.x - tri.vertices[0].uv.x;
-      const float dv1 = tri.vertices[1].uv.y - tri.vertices[0].uv.y;
-      const float du2 = tri.vertices[2].uv.x - tri.vertices[0].uv.x;
-      const float dv2 = tri.vertices[2].uv.y - tri.vertices[0].uv.y;
-      const float det = du1 * dv2 - du2 * dv1;
-      if (std::abs(det) > 1e-12f)
-      {
-        const float r = 1.0f / det;
-        triTangent = {
-            r * (dv2 * e1x - dv1 * e2x), r * (dv2 * e1y - dv1 * e2y), r * (dv2 * e1z - dv1 * e2z)};
-      }
-      else
-      {
-        triTangent = {1.0f, 0.0f, 0.0f};  // degenerate UV: arbitrary tangent
-      }
+      const float r = 1.0f / det;
+      triTangent = (e1 * dv2 - e2 * dv1) * r;
+      const TVector3Df triBitangent = (e2 * du1 - e1 * du2) * r;
+      const auto cross = [](const TVector3Df& a, const TVector3Df& b)
+      { return TVector3Df(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x); };
+      const TVector3Df NxT = cross(cross(e1, e2), triTangent);
+      const float dotB = NxT.x * triBitangent.x + NxT.y * triBitangent.y + NxT.z * triBitangent.z;
+      handedness = dotB < 0 ? -1.0f : 1.0f;
     }
 
     for (int i = 0; i < 3; ++i)
@@ -647,10 +810,9 @@ void TexturedTrianglesProxyBase::compile(const mrpt::viz::CVisualObject* sourceO
 
       // Use per-vertex tangent if available, else the computed per-triangle tangent
       const auto& vt = tri.vertices[i].tangent;
-      if (vt.x != 0 || vt.y != 0 || vt.z != 0)
-        tangents.push_back(vt);
-      else
-        tangents.push_back(triTangent);
+      const bool hasVertexTangent = vt.x != 0 || vt.y != 0 || vt.z != 0;
+      const TVector3Df& t = hasVertexTangent ? vt : triTangent;
+      tangents.insert(tangents.end(), {t.x, t.y, t.z, handedness});
 
       // rgba.r/g/b/a are uint8_t (TPointXYZfRGBAu8), use directly:
       const auto& rgba = tri.vertices[i].xyzrgba;
@@ -694,16 +856,16 @@ void TexturedTrianglesProxyBase::compile(const mrpt::viz::CVisualObject* sourceO
   // Attribute 4: tangent (vec3) for normal mapping
   m_tangentBuffer.createOnce();
   m_tangentBuffer.bind();
-  m_tangentBuffer.allocate(tangents.data(), static_cast<int>(sizeof(TVector3Df) * vertexCount));
+  m_tangentBuffer.allocate(tangents.data(), static_cast<int>(sizeof(float) * tangents.size()));
   glEnableVertexAttribArray(4);
-  glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(TVector3Df), nullptr);
+  glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
 
   // Unbind
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-  // Invalidate cached bounding box
-  m_cachedBBox.reset();
+  m_localBBox = boundingBoxOf(vertices);
+  m_transparent = anyTranslucent(colors);
 
   CHECK_OPENGL_ERROR_IN_DEBUG();
 
