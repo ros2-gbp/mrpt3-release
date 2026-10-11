@@ -316,7 +316,7 @@ void CMetricMapBuilderICP::processObservation(const CObservation::Ptr& obs)
           MRPT_LOG_INFO_STREAM(
               "processObservation: previousPose=" << previousKnownRobotPose << "-> currentPose="
                                                   << pEst2D.getMeanVal() << "\n");
-          MRPT_LOG_INFO(format(
+          MRPT_LOG_INFO(mrpt::format(
               "[CMetricMapBuilderICP]   Fit:%.1f%% Itr:%i In "
               "%.02fms \n",
               icpReturn.goodness * 100, icpReturn.nIterations, 1000 * icpReturn.executionTime));
@@ -564,7 +564,8 @@ void CMetricMapBuilderICP::saveCurrentEstimationToImage(const std::string& file)
 
   // grid map as bitmap:
   auto pGrid = metricMap.mapByClass<COccupancyGridMap2D>();
-  if (pGrid) pGrid->getAsImage(img);
+  ASSERTMSG_(pGrid, "A gridmap is required to render the current estimation");
+  pGrid->getAsImage(img);
 
   int imgHeight = static_cast<int>(img.getHeight());
 
