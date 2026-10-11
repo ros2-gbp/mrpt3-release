@@ -34,6 +34,27 @@ using namespace mrpt::math;
 using namespace mrpt::serialization::metaprogramming;
 using namespace std;
 
+namespace
+{
+// Half width and height [m] of the area seen by an orthographic camera, as
+// used by the renderer's projection matrix
+// (mrpt::opengl::TRenderMatrices::computeProjectionMatrix()).
+std::pair<double, double> orthoHalfExtents(double zoom, double aspect)
+{
+  double halfW = 0.25 * zoom;
+  double halfH = 0.25 * zoom;
+  if (aspect > 1)
+  {
+    halfW *= aspect;
+  }
+  else if (aspect != 0)
+  {
+    halfH /= aspect;
+  }
+  return {halfW, halfH};
+}
+}  // namespace
+
 IMPLEMENTS_SERIALIZABLE(Viewport, CSerializable, mrpt::viz)
 
 /*--------------------------------------------------------------
@@ -83,11 +104,19 @@ void Viewport::getViewportPosition(double& x, double& y, double& width, double& 
 /*--------------------------------------------------------------
           clear
   ---------------------------------------------------------------*/
-void Viewport::clear() { m_objects.clear(); }
+void Viewport::clear()
+{
+  m_objects.clear();
+  notifySceneStructureChange();
+}
 /*--------------------------------------------------------------
           insert
   ---------------------------------------------------------------*/
-void Viewport::insert(const CVisualObject::Ptr& newObject) { m_objects.push_back(newObject); }
+void Viewport::insert(const CVisualObject::Ptr& newObject)
+{
+  m_objects.push_back(newObject);
+  notifySceneStructureChange();
+}
 
 uint8_t Viewport::serializeGetVersion() const { return 10; }
 void Viewport::serializeTo(mrpt::serialization::CArchive& out) const
@@ -185,6 +214,10 @@ void Viewport::serializeFrom(mrpt::serialization::CArchive& in, uint8_t version)
         in >> m_background_color.R >> m_background_color.G >> m_background_color.B >>
             m_background_color.A;
       }
+      else
+      {
+        m_background_color = mrpt::img::TColorf(0.4f, 0.4f, 0.4f);
+      }
 
       // Load objects:
       uint32_t n;
@@ -193,6 +226,7 @@ void Viewport::serializeFrom(mrpt::serialization::CArchive& in, uint8_t version)
       m_objects.resize(n);
 
       for_each(m_objects.begin(), m_objects.end(), ObjectReadFromStream(&in));
+      notifySceneStructureChange();
 
       // Added in v2: Global OpenGL settings:
       if (version >= 2)
@@ -201,7 +235,7 @@ void Viewport::serializeFrom(mrpt::serialization::CArchive& in, uint8_t version)
       }
       else
       {
-        // Defaults
+        m_OpenGL_enablePolygonNicest = true;
       }
 
       // Added in v3: Lights
@@ -235,7 +269,8 @@ void Viewport::serializeFrom(mrpt::serialization::CArchive& in, uint8_t version)
       }
 
       // Added in v5: image mode
-      if (in.ReadAs<bool>())
+      const bool hasImageViewPlane = (version >= 5) && in.ReadAs<bool>();
+      if (hasImageViewPlane)
       {
         in >> m_imageViewPlane;
       }
@@ -266,10 +301,23 @@ void Viewport::serializeFrom(mrpt::serialization::CArchive& in, uint8_t version)
       {
         in >> m_clip_max >> m_clip_min >> m_lightShadowClipMin >> m_lightShadowClipMax;
       }
+      else
+      {
+        // Defaults, so that loading into a reused object does not keep the
+        // clip distances it happened to have:
+        m_clip_min = 0.01f;
+        m_clip_max = 1000.0f;
+        m_lightShadowClipMin = 0.01f;
+        m_lightShadowClipMax = 1000.0f;
+      }
 
       if (version >= 10)
       {
         in >> m_isViewportVisible;
+      }
+      else
+      {
+        m_isViewportVisible = true;
       }
     }
     break;
@@ -281,7 +329,7 @@ void Viewport::serializeFrom(mrpt::serialization::CArchive& in, uint8_t version)
 /*---------------------------------------------------------------
               getByName
   ---------------------------------------------------------------*/
-CVisualObject::Ptr Viewport::getByName(const string& str)
+CVisualObject::ConstPtr Viewport::getByName(const string& str) const
 {
   for (const auto& m_object : m_objects)
   {
@@ -292,8 +340,8 @@ CVisualObject::Ptr Viewport::getByName(const string& str)
 
     if (m_object->GetRuntimeClass() == CLASS_ID_NAMESPACE(CSetOfObjects, mrpt::viz))
     {
-      if (CVisualObject::Ptr ret =
-              std::dynamic_pointer_cast<CSetOfObjects>(m_object)->getByName(str);
+      if (CVisualObject::ConstPtr ret =
+              std::dynamic_pointer_cast<const CSetOfObjects>(m_object)->getByName(str);
           ret)
       {
         return ret;
@@ -364,6 +412,7 @@ void Viewport::removeObject(const CVisualObject::Ptr& obj)
     if (*it == obj)
     {
       m_objects.erase(it);
+      notifySceneStructureChange();
       return;
     }
     else if ((*it)->GetRuntimeClass() == CLASS_ID_NAMESPACE(CSetOfObjects, mrpt::viz))
@@ -410,6 +459,7 @@ void Viewport::setNormalMode()
 {
   // If this was an image-mode viewport, remove the quad object to disable it.
   m_imageViewPlane.reset();
+  notifySceneStructureChange();
 
   m_isCloned = false;
   m_isClonedCamera = false;
@@ -434,6 +484,7 @@ void Viewport::internal_enableImageView(bool transparentBackground)
     m_imageViewPlane = mrpt::viz::CTexturedPlane::Create();
     // Flip vertically:
     m_imageViewPlane->setPlaneCorners(-1, 1, 1, -1);
+    notifySceneStructureChange();
   }
   setTransparent(transparentBackground);
 }
@@ -488,7 +539,7 @@ const CCamera* Viewport::internalResolveActiveCamera(const CCamera* forceThisCam
     if (!view)
     {
       THROW_EXCEPTION_FMT(
-          "Cloned viewport '%s' not found in parent Scene", m_clonedViewport.c_str());
+          "Cloned viewport '%s' not found in parent Scene", m_clonedCameraViewport.c_str());
     }
 
     viewForGetCamera = m_isClonedCamera ? view.get() : this;
@@ -500,8 +551,7 @@ const CCamera* Viewport::internalResolveActiveCamera(const CCamera* forceThisCam
 
   // Get camera:
   // 1st: if there is a CCamera in the scene (nullptr if no camera found):
-  const auto camPtr = viewForGetCamera->getByClass<CCamera>();
-  const auto* myCamera = camPtr ? camPtr.get() : nullptr;
+  const auto* myCamera = viewForGetCamera->findCameraObject();
 
   // 2nd: the internal camera of all viewports:
   if (myCamera == nullptr)
@@ -516,6 +566,21 @@ const CCamera* Viewport::internalResolveActiveCamera(const CCamera* forceThisCam
   }
 
   return myCamera;
+}
+
+const CCamera* Viewport::findCameraObject() const
+{
+  std::lock_guard<std::mutex> lck(m_cameraObjectCacheMtx.data);
+  auto& c = m_cameraObjectCache;
+
+  const uint64_t structureCount = sceneStructureChangeCount();
+  if (c.structureChangeCount != structureCount)
+  {
+    c.camera = getByClass<CCamera>();
+    c.structureChangeCount = structureCount;
+  }
+  // The weak pointer cannot expire without a structural change, but stay safe:
+  return c.camera.lock().get();
 }
 
 void Viewport::enableShadowCasting(
@@ -619,8 +684,7 @@ mrpt::math::TLine3D Viewport::get3DRayForPixelCoord(
       const double nx = (2.0 * pixelCoord.x / viewportSize.x - 1.0);
       const double ny = -(2.0 * pixelCoord.y / viewportSize.y - 1.0);
 
-      const double half_w = zoom * aspect * 0.5;
-      const double half_h = zoom * 0.5;
+      const auto [half_w, half_h] = orthoHalfExtents(zoom, aspect);
 
       mrpt::math::TPoint3D origin = eye + right * (nx * half_w) + camUp * (ny * half_h);
 
@@ -706,8 +770,7 @@ mrpt::math::TLine3D Viewport::get3DRayForPixelCoord(
     const double nx = (2.0 * pixelCoord.x / viewportSize.x - 1.0);
     const double ny = -(2.0 * pixelCoord.y / viewportSize.y - 1.0);
 
-    const double half_w = dis * aspect * 0.5;
-    const double half_h = dis * 0.5;
+    const auto [half_w, half_h] = orthoHalfExtents(dis, aspect);
 
     mrpt::math::TPoint3D origin = eye + right * (nx * half_w) + up * (ny * half_h);
 
