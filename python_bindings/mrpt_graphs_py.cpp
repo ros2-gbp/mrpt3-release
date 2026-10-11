@@ -14,23 +14,33 @@
 
 #include <mrpt/graphs/CNetworkOfPoses.h>
 #include <mrpt/graphs/TNodeID.h>
+#include <mrpt/graphs/dijkstra.h>
 #include <mrpt/poses/CPose2D.h>
 #include <mrpt/poses/CPose3D.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <limits>
+
 namespace py = pybind11;
 using namespace pybind11::literals;
 
+namespace
+{
+// A finite search radius makes CDijkstra build the tree of the nodes reachable
+// from the source, instead of throwing if the graph is not fully connected.
+constexpr size_t REACHABLE_ONLY = std::numeric_limits<size_t>::max() - 1;
+}  // namespace
+
 // Helper: expose CNetworkOfPoses<CPOSE> as the given Python class name
 template <typename CPOSE>
-void bind_CNetworkOfPoses(py::module& m, const char* className)
+void bind_CNetworkOfPoses(py::module& m, const char* className, const char* classDoc)
 {
   using G = mrpt::graphs::CNetworkOfPoses<CPOSE>;
   using EdgeMap = typename mrpt::graphs::CDirectedGraph<CPOSE>::edges_map_t;
 
-  py::class_<G>(m, className)
-      .def(py::init<>())
+  py::class_<G>(m, className, classDoc)
+      .def(py::init<>(), "Creates an empty graph.")
       // Node/edge counts
       .def("edgeCount", &G::edgeCount, "Number of edges in the graph")
       .def(
@@ -63,15 +73,64 @@ void bind_CNetworkOfPoses(py::module& m, const char* className)
             return ids;
           },
           "Return a list of all node IDs")
+      .def(
+          "getNeighborsOf",
+          [](const G& g, mrpt::graphs::TNodeID id) { return g.getNeighborsOf(id); }, "node_id"_a,
+          "IDs of the nodes connected to the given one by an edge (in any direction)")
+      // Graph algorithms
+      .def(
+          "dijkstra_nodes_estimate", [](G& g) { g.dijkstra_nodes_estimate(); },
+          "Recomputes all node poses by composing edges along the shortest-path spanning tree "
+          "from the root node")
+      .def(
+          "dijkstra_path",
+          [](const G& g, mrpt::graphs::TNodeID source, mrpt::graphs::TNodeID target)
+          {
+            const mrpt::graphs::CDijkstra<G> dijkstra(g, source, {}, {}, REACHABLE_ONLY);
+            if (!dijkstra.getNodeDistanceToRoot(target))
+            {
+              throw py::value_error("target node is not reachable from source");
+            }
+            typename mrpt::graphs::CDijkstra<G>::edge_list_t edges;
+            dijkstra.getShortestPathTo(target, edges);
+            std::vector<mrpt::graphs::TNodeID> path{source};
+            for (const auto& e : edges)
+            {
+              path.push_back(e.first == path.back() ? e.second : e.first);
+            }
+            return path;
+          },
+          "source"_a, "target"_a,
+          "Shortest path (fewest edges) between two nodes as a list of node IDs, from source to "
+          "target, ignoring edge directions. Raises ValueError if target is unreachable.")
+      .def(
+          "getNodeDistances",
+          [](const G& g, mrpt::graphs::TNodeID source)
+          {
+            const mrpt::graphs::CDijkstra<G> dijkstra(g, source, {}, {}, REACHABLE_ONLY);
+            std::map<mrpt::graphs::TNodeID, double> dists;
+            for (const auto id : dijkstra.getListOfAllNodes())
+            {
+              if (const auto d = dijkstra.getNodeDistanceToRoot(id); d)
+              {
+                dists[id] = *d;
+              }
+            }
+            return dists;
+          },
+          "source"_a, "Topological distance (number of edges) from source to every reachable node")
       // root
       .def_readwrite("root", &G::root, "Root node ID (default: 0)")
       // File I/O
-      .def("saveToTextFile", &G::saveToTextFile, "fileName"_a)
+      .def(
+          "saveToTextFile", &G::saveToTextFile, "fileName"_a,
+          "Saves the graph to a text file in the TORO / g2o format.")
       .def(
           "loadFromTextFile",
           [](G& g, const std::string& fn, bool collapse_dup)
           { g.loadFromTextFile(fn, collapse_dup); },
-          "fileName"_a, "collapse_dup_edges"_a = true)
+          "fileName"_a, "collapse_dup_edges"_a = true,
+          "Loads the graph from a text file in the TORO / g2o format.")
       .def(
           "__repr__",
           [className](const G& g)
@@ -88,10 +147,12 @@ PYBIND11_MODULE(_bindings, m)
   // -------------------------------------------------------------------------
   // CNetworkOfPoses2D — 2D pose graph with CPose2D edges
   // -------------------------------------------------------------------------
-  bind_CNetworkOfPoses<mrpt::poses::CPose2D>(m, "CNetworkOfPoses2D");
+  bind_CNetworkOfPoses<mrpt::poses::CPose2D>(
+      m, "CNetworkOfPoses2D", "A graph of 2D poses (nodes) and relative pose constraints (edges).");
 
   // -------------------------------------------------------------------------
   // CNetworkOfPoses3D — 3D pose graph with CPose3D edges
   // -------------------------------------------------------------------------
-  bind_CNetworkOfPoses<mrpt::poses::CPose3D>(m, "CNetworkOfPoses3D");
+  bind_CNetworkOfPoses<mrpt::poses::CPose3D>(
+      m, "CNetworkOfPoses3D", "A graph of 3D poses (nodes) and relative pose constraints (edges).");
 }
