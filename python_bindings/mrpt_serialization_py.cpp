@@ -11,31 +11,50 @@
 #include <pybind11/stl.h>
 
 namespace py = pybind11;
+using namespace pybind11::literals;
 
 PYBIND11_MODULE(_bindings, m)
 {
   m.doc() = "Python bindings for mrpt_serialization";
+
+  // End of stream while reading objects maps to Python's EOFError, so
+  // reading loops can stop with `except EOFError`.
+  py::register_exception<mrpt::serialization::CExceptionEOF>(m, "CExceptionEOF", PyExc_EOFError)
+      .doc() = "End of stream reached while reading an object (an EOFError).";
 
   // 1. CSerializable
   // Note: py::base<mrpt::rtti::CObject>() tells pybind11 about the
   // inheritance even if CObject is defined in a different module.
   py::class_<
       mrpt::serialization::CSerializable, std::shared_ptr<mrpt::serialization::CSerializable>>(
-      m, "CSerializable")
+      m, "CSerializable",
+      "The virtual base class which provides a unified interface for all persistent objects in "
+      "MRPT.")
       .def(
           "GetRuntimeClass",
           [](const mrpt::serialization::CSerializable& self) { return self.GetRuntimeClass(); },
-          py::return_value_policy::reference);
+          py::return_value_policy::reference,
+          "Returns information about the class of an object in runtime.");
 
   // 2. CArchive
   py::class_<mrpt::serialization::CArchive, std::shared_ptr<mrpt::serialization::CArchive>>(
-      m, "CArchive")
+      m, "CArchive", "Serializes and deserializes MRPT objects to/from a stream.")
       // High-level Object I/O
       .def(
           "ReadObject",
           [](mrpt::serialization::CArchive& self)
           { return self.ReadObject<mrpt::serialization::CSerializable>(); },
-          "Reads an MRPT object from the stream.")
+          "Reads an MRPT object from the stream. Raises EOFError at the end of the stream.")
+      .def(
+          "ReadObject",
+          [](mrpt::serialization::CArchive& self, mrpt::serialization::CSerializable& obj)
+          { self.ReadObject(&obj); },
+          "obj"_a,
+          "Reads an MRPT object from the stream into an existing object, which must be of the "
+          "same class.")
+      .def(
+          "__repr__", [](const mrpt::serialization::CArchive& self)
+          { return "CArchive('" + self.getArchiveDescription() + "')"; })
 
       .def(
           "WriteObject",
@@ -44,8 +63,8 @@ PYBIND11_MODULE(_bindings, m)
           "Writes an MRPT object to the stream.")
 
       // Data Type I/O (using lambdas to resolve templates/protected access)
-      .def("ReadDouble", &mrpt::serialization::CArchive::ReadPOD<double>)
-      .def("ReadInt", &mrpt::serialization::CArchive::ReadPOD<int32_t>);
+      .def("ReadDouble", &mrpt::serialization::CArchive::ReadPOD<double>, "Reads a double value.")
+      .def("ReadInt", &mrpt::serialization::CArchive::ReadPOD<int32_t>, "Reads an int value.");
 
   // 3. Global Utility Functions
   // This allows Python users to easily serialize/deserialize to 'bytes'
