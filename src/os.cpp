@@ -27,6 +27,7 @@
 #include <sys/wait.h>
 #endif
 
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <cfloat>
@@ -508,21 +509,28 @@ void consoleColorAndStyle(
   static std::mutex mtx;
   std::lock_guard<std::mutex> lck(mtx);
 
-  static ConsoleForegroundColor last_fg = ConsoleForegroundColor::DEFAULT;
-  static ConsoleBackgroundColor last_bg = ConsoleBackgroundColor::DEFAULT;
-  static ConsoleTextStyle last_style = ConsoleTextStyle::REGULAR;
+  // The two streams carry independent escape-sequence state, so what was last
+  // emitted must be remembered for each of them separately:
+  static std::array<ConsoleForegroundColor, 2> last_fg = {
+      ConsoleForegroundColor::DEFAULT, ConsoleForegroundColor::DEFAULT};
+  static std::array<ConsoleBackgroundColor, 2> last_bg = {
+      ConsoleBackgroundColor::DEFAULT, ConsoleBackgroundColor::DEFAULT};
+  static std::array<ConsoleTextStyle, 2> last_style = {
+      ConsoleTextStyle::REGULAR, ConsoleTextStyle::REGULAR};
 
-  if (fg == last_fg && bg == last_bg && style == last_style)
+  const size_t idx = applyToStdErr ? 1 : 0;
+
+  if (fg == last_fg[idx] && bg == last_bg[idx] && style == last_style[idx])
   {
     return;
   }
-  last_fg = fg;
-  last_bg = bg;
-  last_style = style;
+  last_fg[idx] = fg;
+  last_bg[idx] = bg;
+  last_style[idx] = style;
 
   // *nix:
-  FILE* f = applyToStdErr ? stdout : stderr;
-  const int fd = applyToStdErr ? STDOUT_FILENO : STDERR_FILENO;
+  FILE* f = applyToStdErr ? stderr : stdout;
+  const int fd = applyToStdErr ? STDERR_FILENO : STDOUT_FILENO;
 
   // No color support if it is not a real console:
   if (!isatty(fd))
@@ -630,57 +638,8 @@ bool launchProcess(const std::string& command)
 
 std::string find_mrpt_shared_dir()
 {
-  static bool mrpt_shared_first_call = true;
-  static std::string found_mrpt_shared_dir;
-
-  if (mrpt_shared_first_call)
-  {
-    mrpt_shared_first_call = false;
-
-    for (int attempt = 0;; attempt++)
-    {
-      std::string dir;
-      switch (attempt)
-      {
-        case 0:
-          dir = std::string(MRPT_SOURCE_BASE_DIRECTORY) + std::string("/share/mrpt/");
-          break;
-        case 1:
-          dir = std::string(MRPT_INSTALL_PREFIX_DIRECTORY) + std::string("/share/mrpt/");
-          break;
-        case 2:
-          // colcon workspace: mrpt_data installs to a sibling package prefix
-          dir = std::string(MRPT_INSTALL_PREFIX_DIRECTORY) +
-                std::string("/../mrpt_data/share/mrpt_data/");
-          break;
-#ifdef _WIN32
-        case 3:
-        {
-          char curExe[4096];
-          GetModuleFileNameA(nullptr, curExe, sizeof(curExe));
-
-          dir = mrpt::system::extractFileDirectory(std::string(curExe)) + "/../share/mrpt/";
-        }
-        break;
-#endif
-
-        default:
-          found_mrpt_shared_dir = ".";
-          break;
-      };
-      if (!dir.empty() && mrpt::system::directoryExists(dir))
-      {
-        found_mrpt_shared_dir = dir;
-      }
-
-      if (!found_mrpt_shared_dir.empty())
-      {
-        break;
-      }
-    }
-  }
-
-  return found_mrpt_shared_dir;
+  const std::string dir = mrpt::system::getShareMRPTDir();
+  return dir.empty() ? std::string("./") : dir;
 }  // end of find_mrpt_shared_dir
 
 int executeCommand(

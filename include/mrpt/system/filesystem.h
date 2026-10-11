@@ -43,10 +43,11 @@ std::string getTempFileName();
 /** Returns the current working directory  */
 std::string getcwd();
 
-/** Attempts to find the directory `[PREFIX/]share/mrpt/` and returns its
- * absolute path, or empty string if not found.
- * Example return paths: Linux after installing = `/usr/share/mrpt/`;
- * manually-built system = `[MRPT_SOURCE_DIR]/share/mrpt/`, etc.  */
+/** Attempts to find the root directory of the `mrpt_data` package (holding
+ * `config_files/`, `datasets/`, `tests/`) and returns its absolute path with a
+ * trailing `/`, or an empty string if not found.
+ * Example return paths: Linux after installing = `/usr/share/mrpt_data/`;
+ * source tree = `[MRPT_SOURCE_DIR]/modules/mrpt_data/`, etc.  */
 std::string getShareMRPTDir();
 
 /** Creates a directory
@@ -62,9 +63,11 @@ bool createDirectory(const std::string& dirName);
 bool deleteFile(const std::string& fileName);
 
 /** Delete one or more files, especified by the (optional) path and the file
- * name (including '?' or '*') - Use forward slash ('/') for directories for
- * compatibility between Windows and Linux, since they will be internally
- * traslated into backward slashes ('\') if MRPT is compiled under Windows.
+ * name, which can include the wildcards '?' and '*'. Wildcards are only
+ * accepted in the file name, not in the directories of the path, and they do
+ * not match hidden files (starting with a dot) unless the pattern does too.
+ * Directories are never deleted. Use forward slash ('/') to separate
+ * directories.
  * \sa deleteFile
  */
 void deleteFiles(const std::string& s);
