@@ -29,7 +29,11 @@ using namespace mrpt::serialization::metaprogramming;
 
 IMPLEMENTS_SERIALIZABLE(CSetOfObjects, CVisualObject, mrpt::viz)
 
-void CSetOfObjects::clear() { m_objects.clear(); }
+void CSetOfObjects::clear()
+{
+  m_objects.clear();
+  notifySceneStructureChange();
+}
 
 uint8_t CSetOfObjects::serializeGetVersion() const { return 0; }
 void CSetOfObjects::serializeTo(mrpt::serialization::CArchive& out) const
@@ -58,6 +62,7 @@ void CSetOfObjects::serializeFrom(mrpt::serialization::CArchive& in, uint8_t ver
       m_objects.resize(n);
 
       for_each(m_objects.begin(), m_objects.end(), ObjectReadFromStream(&in));
+      notifySceneStructureChange();
     }
     break;
     default:
@@ -69,6 +74,7 @@ void CSetOfObjects::insert(const CVisualObject::Ptr& newObject)
 {
   ASSERTMSG_(newObject.get() != this, "Error: Trying to insert container into itself!");
   m_objects.push_back(newObject);
+  notifySceneStructureChange();
 }
 
 void CSetOfObjects::dumpListOfObjects(std::vector<std::string>& lst) const
@@ -133,6 +139,7 @@ void CSetOfObjects::removeObject(const CVisualObject::Ptr& obj)
     if (*it == obj)
     {
       m_objects.erase(it);
+      notifySceneStructureChange();
       return;
     }
     else if ((*it)->GetRuntimeClass() == CLASS_ID_NAMESPACE(CSetOfObjects, mrpt::viz))
@@ -200,9 +207,9 @@ CVisualObject& CSetOfObjects::setColorA_u8(const uint8_t a)
 /*---------------------------------------------------------------
               getByName
   ---------------------------------------------------------------*/
-CVisualObject::Ptr CSetOfObjects::getByName(const string& str)
+CVisualObject::ConstPtr CSetOfObjects::getByName(const string& str) const
 {
-  for (auto& o : m_objects)
+  for (const auto& o : m_objects)
   {
     if (!o)
     {
@@ -213,9 +220,9 @@ CVisualObject::Ptr CSetOfObjects::getByName(const string& str)
       return o;
     }
 
-    if (auto* objs = dynamic_cast<CSetOfObjects*>(o.get()))
+    if (const auto* objs = dynamic_cast<const CSetOfObjects*>(o.get()))
     {
-      CVisualObject::Ptr ret = objs->getByName(str);
+      CVisualObject::ConstPtr ret = objs->getByName(str);
       if (ret)
       {
         return ret;
@@ -236,14 +243,18 @@ auto CSetOfObjects::internalBoundingBoxLocal() const -> mrpt::math::TBoundingBox
     {
       continue;
     }
+    // Each child's box must be brought into this container's frame, i.e.
+    // composed with the child's own pose:
+    const auto childBB = o->getBoundingBox();
+    const mrpt::math::TBoundingBoxf childBBf(childBB.min.cast<float>(), childBB.max.cast<float>());
     if (first)
     {
-      bb = o->getBoundingBoxLocalf();
+      bb = childBBf;
       first = false;
     }
     else
     {
-      bb = bb.unionWith(o->getBoundingBoxLocalf());
+      bb = bb.unionWith(childBBf);
     }
   }
 

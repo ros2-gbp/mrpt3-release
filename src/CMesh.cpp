@@ -622,8 +622,17 @@ void CMesh::updateBuffers() const
 
 auto CMesh::internalBoundingBoxLocal() const -> mrpt::math::TBoundingBoxf
 {
+  // From the height matrix instead of the cached triangles, which are only
+  // (re)generated when the render buffers are updated:
+  float zMin = 0;
+  float zMax = 0;
+  if (Z.rows() > 0 && Z.cols() > 0)
+  {
+    zMin = Z.minCoeff();
+    zMax = Z.maxCoeff();
+  }
   return mrpt::math::TBoundingBoxf::FromUnsortedPoints(
-      {m_xMin, m_yMin, m_zMin}, {m_xMax, m_yMax, m_zMax});
+      {m_xMin, m_yMin, zMin}, {m_xMax, m_yMax, zMax});
 }
 
 void CMesh::adjustGridToImageAR()
@@ -631,7 +640,8 @@ void CMesh::adjustGridToImageAR()
   ASSERT_(m_isImage);
   const float ycenter = 0.5f * (m_yMin + m_yMax);
   const float xwidth = m_xMax - m_xMin;
-  const float newratio = float(getTextureImage().getWidth()) / float(getTextureImage().getHeight());
+  // The Y span must shrink for a wide image, hence height/width:
+  const float newratio = float(getTextureImage().getHeight()) / float(getTextureImage().getWidth());
   m_yMax = ycenter + 0.5f * newratio * xwidth;
   m_yMin = ycenter - 0.5f * newratio * xwidth;
   CVisualObject::notifyChange();

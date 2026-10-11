@@ -15,13 +15,16 @@
 #include <mrpt/serialization/CArchive.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/viz/CAssimpModel.h>
+#include <mrpt/viz/CSetOfLines.h>
 #include <mrpt/viz/CSetOfTexturedTriangles.h>
 #include <mrpt/viz/CSetOfTriangles.h>
 #include <mrpt/viz/config.h>  // MRPT_HAS_ASSIMP
 
+#include <algorithm>
 #include <iostream>
 
 #if MRPT_HAS_ASSIMP
+#include <assimp/config.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
@@ -57,7 +60,7 @@ CAssimpModel& CAssimpModel::operator=(CAssimpModel&&) noexcept = default;
 // Serialization
 // ============================================================================
 
-uint8_t CAssimpModel::serializeGetVersion() const { return 1; }
+uint8_t CAssimpModel::serializeGetVersion() const { return 2; }
 
 void CAssimpModel::serializeTo(mrpt::serialization::CArchive& out) const
 {
@@ -67,7 +70,6 @@ void CAssimpModel::serializeTo(mrpt::serialization::CArchive& out) const
   // v1: model info
   out << m_modelPath;
   out << m_modelLoadFlags;
-  out << m_splitTrianglesRenderingBBox;
 }
 
 void CAssimpModel::serializeFrom(mrpt::serialization::CArchive& in, uint8_t version)
@@ -76,20 +78,28 @@ void CAssimpModel::serializeFrom(mrpt::serialization::CArchive& in, uint8_t vers
   {
     case 0:
     case 1:
+    case 2:
     {
-      // Deserialize base class
-      CSetOfObjects::serializeFrom(in, version);
+      // Deserialize base class. Note that serializeTo() always emits the
+      // base payload with CSetOfObjects' own (unversioned) writer, so the
+      // version passed here is the base's, not this class's.
+      CSetOfObjects::serializeFrom(in, 0);
 
       if (version >= 1)
       {
         in >> m_modelPath;
         in >> m_modelLoadFlags;
-        in >> m_splitTrianglesRenderingBBox;
+      }
+      if (version == 1)
+      {
+        in.ReadAs<float>();  // Unused: old split triangles bbox size
       }
 
       // Rebuild internal pointers to child objects
       m_texturedMeshes.clear();
+      m_texturedMeshMapFiles.clear();
       m_nonTexturedMesh.reset();
+      m_lines.clear();
 
       for (auto& child : *this)
       {
@@ -100,6 +110,10 @@ void CAssimpModel::serializeFrom(mrpt::serialization::CArchive& in, uint8_t vers
         else if (auto triMesh = std::dynamic_pointer_cast<CSetOfTriangles>(child))
         {
           m_nonTexturedMesh = triMesh;
+        }
+        else if (auto lines = std::dynamic_pointer_cast<CSetOfLines>(child))
+        {
+          m_lines.push_back(lines);
         }
       }
     }
@@ -126,7 +140,9 @@ void CAssimpModel::clear()
   m_modelDirectory.clear();
   m_modelLoadFlags = 0;
   m_texturedMeshes.clear();
+  m_texturedMeshMapFiles.clear();
   m_nonTexturedMesh.reset();
+  m_lines.clear();
   m_textureCache.clear();
   m_cachedBBox.reset();
   m_bboxMin = {0, 0, 0};
@@ -198,11 +214,21 @@ void CAssimpModel::loadScene(const std::string& file_name, int flags)
     assimpFlags |= aiProcess_FlipUVs;
   }
 
-  // Always triangulate and generate normals if missing
+  // Always triangulate and generate normals if missing.
+  // Note: aiProcess_GenNormals and aiProcess_GenSmoothNormals are mutually
+  // exclusive for Assimp, so only request the smooth variant if the selected
+  // preset did not already ask for flat normals (the "fast" preset does).
   assimpFlags |= aiProcess_Triangulate;
-  assimpFlags |= aiProcess_GenSmoothNormals;
+  if ((assimpFlags & aiProcess_GenNormals) == 0)
+  {
+    assimpFlags |= aiProcess_GenSmoothNormals;
+  }
   assimpFlags |= aiProcess_JoinIdenticalVertices;
   assimpFlags |= aiProcess_CalcTangentSpace;
+
+  // Drop zero-area triangles instead of converting them into lines or points,
+  // which would be drawn as spurious edges:
+  m_assimpScene->importer.SetPropertyBool(AI_CONFIG_PP_FD_REMOVE, true);
 
   // Load the scene
   m_assimpScene->scene = m_assimpScene->importer.ReadFile(file_name, assimpFlags);
@@ -228,17 +254,12 @@ void CAssimpModel::loadScene(const std::string& file_name, int flags)
   // Process the scene
   processAssimpScene();
 
-  // Apply splitting if enabled
-  if (m_splitTrianglesRenderingBBox > 0.0f)
-  {
-    applySplitTrianglesRendering();
-  }
-
   if (verbose)
   {
     std::cout << "[CAssimpModel] Created:\n"
               << "  - " << m_texturedMeshes.size() << " textured mesh groups\n"
               << "  - " << (m_nonTexturedMesh ? "1" : "0") << " non-textured mesh\n"
+              << "  - " << getLineCount() << " line segments\n"
               << "  - BBox: [" << m_bboxMin << "] to [" << m_bboxMax << "]\n";
   }
 
@@ -292,6 +313,11 @@ void CAssimpModel::processAssimpScene()
   else
   {
     m_nonTexturedMesh.reset();
+  }
+
+  for (const auto& lines : m_lines)
+  {
+    insert(lines);
   }
 
   MRPT_END
@@ -476,8 +502,36 @@ void CAssimpModel::processMesh(const void* meshPtr, const void* scenePtr, const 
     }
   }
 
-  // Check for normal map texture
+  // Resolves a texture file name from the model into a loadable path, or
+  // returns an empty string if not found:
+  const auto resolveTexturePath = [this](const std::string& texFile) -> std::string
+  {
+    if (!texFile.empty() && texFile[0] == '*')
+    {
+      return "*embedded_" + texFile.substr(1);
+    }
+    if (mrpt::system::fileExists(texFile))
+    {
+      return texFile;
+    }
+    std::string path = m_modelDirectory + "/" + texFile;
+    if (mrpt::system::fileExists(path))
+    {
+      return path;
+    }
+    std::string baseName = mrpt::system::extractFileName(texFile);
+    std::string ext = mrpt::system::extractFileExtension(texFile);
+    if (!ext.empty())
+    {
+      baseName += "." + ext;
+    }
+    path = m_modelDirectory + "/" + baseName;
+    return mrpt::system::fileExists(path) ? path : std::string();
+  };
+
+  // Check for normal map and emissive map textures
   std::string normalMapPath;
+  std::string emissiveMapPath;
   if (!ignoreTextures && material)
   {
     aiString aiNormPath;
@@ -485,43 +539,51 @@ void CAssimpModel::processMesh(const void* meshPtr, const void* scenePtr, const 
     if (material->GetTexture(aiTextureType_NORMALS, 0, &aiNormPath) == AI_SUCCESS ||
         material->GetTexture(aiTextureType_HEIGHT, 0, &aiNormPath) == AI_SUCCESS)
     {
-      std::string normFile = aiNormPath.C_Str();
-      if (!normFile.empty() && normFile[0] == '*')
-      {
-        normalMapPath = "*embedded_" + normFile.substr(1);
-      }
-      else
-      {
-        if (mrpt::system::fileExists(normFile))
-        {
-          normalMapPath = normFile;
-        }
-        else
-        {
-          normalMapPath = m_modelDirectory + "/" + normFile;
-          if (!mrpt::system::fileExists(normalMapPath))
-          {
-            std::string baseName = mrpt::system::extractFileName(normFile);
-            std::string ext = mrpt::system::extractFileExtension(normFile);
-            if (!ext.empty()) baseName += "." + ext;
-            normalMapPath = m_modelDirectory + "/" + baseName;
-            if (!mrpt::system::fileExists(normalMapPath))
-            {
-              normalMapPath.clear();
-            }
-          }
-        }
-      }
+      normalMapPath = resolveTexturePath(aiNormPath.C_Str());
+    }
+
+    aiString aiEmissivePath;
+    if (material->GetTexture(aiTextureType_EMISSIVE, 0, &aiEmissivePath) == AI_SUCCESS)
+    {
+      emissiveMapPath = resolveTexturePath(aiEmissivePath.C_Str());
     }
   }
 
-  // Determine target: textured or non-textured
-  const bool hasTexture = !texturePath.empty();
+  // Determine target: textured or non-textured. Parts with an emissive map
+  // but no diffuse texture also need a textured mesh (with a white texture):
+  const bool hasTexture =
+      !texturePath.empty() || (!emissiveMapPath.empty() && mesh->HasTextureCoords(0));
 
   CSetOfTexturedTriangles::Ptr texturedMesh;
   if (hasTexture)
   {
-    texturedMesh = getOrCreateTexturedMesh(texturePath);
+    // glTF materials define how to use the texture alpha. Otherwise, the
+    // alpha mode is detected from the texture (TAlphaMode::Auto).
+    TAlphaMode alphaMode = TAlphaMode::Auto;
+    float alphaCutoff = 0.5f;
+    aiString alphaModeStr;
+    if (material &&
+        aiGetMaterialString(material, "$mat.gltf.alphaMode", 0, 0, &alphaModeStr) == AI_SUCCESS)
+    {
+      const std::string mode = alphaModeStr.C_Str();
+      if (mode == "MASK")
+      {
+        alphaMode = TAlphaMode::Mask;
+        aiGetMaterialFloat(material, "$mat.gltf.alphaCutoff", 0, 0, &alphaCutoff);
+      }
+      else if (mode == "BLEND")
+      {
+        alphaMode = TAlphaMode::Blend;
+      }
+      else if (mode == "OPAQUE")
+      {
+        alphaMode = TAlphaMode::Opaque;
+      }
+    }
+
+    texturedMesh = getOrCreateTexturedMesh(
+        texturePath, alphaMode, alphaCutoff, matEmissive, matShininess, matSpecularExponent,
+        normalMapPath + "|" + emissiveMapPath);
 
     // Assign normal map if found and not yet assigned
     if (!normalMapPath.empty() && texturedMesh && !texturedMesh->normalMapHasBeenAssigned())
@@ -532,6 +594,16 @@ void CAssimpModel::processMesh(const void* meshPtr, const void* scenePtr, const 
         texturedMesh->assignNormalMap(normTex->rgb);
       }
     }
+
+    // Only parts of the surface glow if there is an emissive map:
+    if (!emissiveMapPath.empty() && texturedMesh && !texturedMesh->emissiveMapHasBeenAssigned())
+    {
+      const LoadedTexture* emissiveTex = loadTexture(emissiveMapPath);
+      if (emissiveTex != nullptr)
+      {
+        texturedMesh->assignEmissiveMap(emissiveTex->rgb);
+      }
+    }
   }
 
   // Process faces (triangles)
@@ -539,7 +611,35 @@ void CAssimpModel::processMesh(const void* meshPtr, const void* scenePtr, const 
   {
     const aiFace& face = mesh->mFaces[f];
 
-    // We only handle triangles (should be guaranteed by aiProcess_Triangulate)
+    // Line primitives (not affected by aiProcess_Triangulate):
+    if (face.mNumIndices == 2)
+    {
+      // CSetOfLines has a single color: group segments by material color.
+      auto it = std::find_if(
+          m_lines.begin(), m_lines.end(),
+          [&](const CSetOfLines::Ptr& l) { return l->getColor_u8() == materialColor; });
+      if (it == m_lines.end())
+      {
+        auto lines = CSetOfLines::Create();
+        lines->setName("lines");
+        lines->setColor_u8(materialColor);
+        m_lines.push_back(lines);
+        it = std::prev(m_lines.end());
+      }
+
+      TPoint3D ends[2];
+      for (unsigned int v = 0; v < 2; v++)
+      {
+        const aiVector3D& pos = mesh->mVertices[face.mIndices[v]];
+        ends[v] = transform.composePoint(TPoint3D(pos.x, pos.y, pos.z));
+        updateBoundingBox(TPoint3Df(ends[v]));
+      }
+      (*it)->appendLine(TSegment3D(ends[0], ends[1]));
+      continue;
+    }
+
+    // Other than lines, we only handle triangles (should be guaranteed by
+    // aiProcess_Triangulate)
     if (face.mNumIndices != 3)
     {
       continue;
@@ -765,13 +865,27 @@ const CAssimpModel::LoadedTexture* CAssimpModel::loadTexture(const std::string& 
 #endif
 }
 
-CSetOfTexturedTriangles::Ptr CAssimpModel::getOrCreateTexturedMesh(const std::string& texturePath)
+CSetOfTexturedTriangles::Ptr CAssimpModel::getOrCreateTexturedMesh(
+    const std::string& texturePath,
+    TAlphaMode alphaMode,
+    float alphaCutoff,
+    const mrpt::img::TColorf& emissive,
+    float shininess,
+    float specularExponent,
+    const std::string& mapFiles)
 {
-  // Check if we already have a mesh for this texture
-  for (auto& mesh : m_texturedMeshes)
+  // Reuse a mesh only if texture, alpha settings and material match, since
+  // material properties are per mesh (e.g. a texture atlas shared by a
+  // lamp frame and its glowing shade):
+  for (size_t i = 0; i < m_texturedMeshes.size(); i++)
   {
+    const auto& mesh = m_texturedMeshes[i];
     // Compare by name (we use texture path as name)
-    if (mesh->getName() == texturePath)
+    if (i < m_texturedMeshMapFiles.size() && m_texturedMeshMapFiles[i] == mapFiles &&
+        mesh->getName() == texturePath && mesh->alphaMode() == alphaMode &&
+        (alphaMode != TAlphaMode::Mask || mesh->alphaCutoff() == alphaCutoff) &&
+        mesh->materialEmissive() == emissive && mesh->materialShininess() == shininess &&
+        mesh->materialSpecularExponent() == specularExponent)
     {
       return mesh;
     }
@@ -781,9 +895,18 @@ CSetOfTexturedTriangles::Ptr CAssimpModel::getOrCreateTexturedMesh(const std::st
   auto mesh = CSetOfTexturedTriangles::Create();
   mesh->setName(texturePath);
 
-  // Load and assign texture
-  const LoadedTexture* tex = loadTexture(texturePath);
-  if (tex != nullptr)
+  // Load and assign texture (white if none, so that the triangles keep the
+  // material color)
+  if (texturePath.empty())
+  {
+    mrpt::img::CImage white(1, 1, mrpt::img::CH_RGB);
+    for (int8_t ch = 0; ch < 3; ch++)
+    {
+      white.at<uint8_t>(0, 0, ch) = 0xff;
+    }
+    mesh->assignImage(white);
+  }
+  else if (const LoadedTexture* tex = loadTexture(texturePath); tex != nullptr)
   {
     if (tex->alpha.has_value())
     {
@@ -795,9 +918,16 @@ CSetOfTexturedTriangles::Ptr CAssimpModel::getOrCreateTexturedMesh(const std::st
     }
   }
 
+  mesh->setAlphaMode(alphaMode);
+  mesh->setAlphaCutoff(alphaCutoff);
+  mesh->materialEmissive(emissive);
+  mesh->materialShininess(shininess);
+  mesh->materialSpecularExponent(specularExponent);
+
   // Add to children and tracking list
   insert(mesh);
   m_texturedMeshes.push_back(mesh);
+  m_texturedMeshMapFiles.push_back(mapFiles);
 
   return mesh;
 }
@@ -838,39 +968,6 @@ TBoundingBoxf CAssimpModel::internalBoundingBoxLocal() const
 }
 
 // ============================================================================
-// Triangle Splitting
-// ============================================================================
-
-void CAssimpModel::setSplitTrianglesRenderingBBox(float bbox_size)
-{
-  if (m_splitTrianglesRenderingBBox == bbox_size)
-  {
-    return;
-  }
-
-  m_splitTrianglesRenderingBBox = bbox_size;
-
-  // If we have loaded content, reapply splitting
-  if (!m_modelPath.empty() && bbox_size > 0.0f)
-  {
-    applySplitTrianglesRendering();
-    CVisualObject::notifyChange();
-  }
-}
-
-void CAssimpModel::applySplitTrianglesRendering()
-{
-  // TODO: Implement spatial subdivision of textured meshes for correct
-  // transparency sorting. This would involve:
-  // 1. For each textured mesh, compute spatial grid based on bbox_size
-  // 2. Assign triangles to grid cells
-  // 3. Create separate child objects for each cell
-  // 4. Enable depth sorting in the renderer
-
-  // For now, this is a no-op placeholder
-}
-
-// ============================================================================
 // Query Methods
 // ============================================================================
 
@@ -881,6 +978,16 @@ size_t CAssimpModel::getNonTexturedTriangleCount() const
     return m_nonTexturedMesh->getTrianglesCount();
   }
   return 0;
+}
+
+size_t CAssimpModel::getLineCount() const
+{
+  size_t count = 0;
+  for (const auto& lines : m_lines)
+  {
+    count += lines->size();
+  }
+  return count;
 }
 
 size_t CAssimpModel::getTotalVertexCount() const
@@ -896,6 +1003,8 @@ size_t CAssimpModel::getTotalVertexCount() const
   {
     count += m_nonTexturedMesh->getTrianglesCount() * 3;
   }
+
+  count += getLineCount() * 2;
 
   return count;
 }
@@ -972,18 +1081,15 @@ void CAssimpModel::rebuildFromAssimpScene()
   // Clear existing child objects but keep the assimp scene alive
   CSetOfObjects::clear();
   m_texturedMeshes.clear();
+  m_texturedMeshMapFiles.clear();
   m_nonTexturedMesh.reset();
+  m_lines.clear();
   m_cachedBBox.reset();
   m_bboxMin = {0, 0, 0};
   m_bboxMax = {0, 0, 0};
 
   // Re-process
   processAssimpScene();
-
-  if (m_splitTrianglesRenderingBBox > 0.0f)
-  {
-    applySplitTrianglesRendering();
-  }
 
   CVisualObject::notifyChange();
 #endif
