@@ -16,14 +16,18 @@
 #include <mrpt/core/exceptions.h>  // for MRPT_END, MRPT_START, e
 #include <mrpt/core/format.h>
 #include <mrpt/system/CDirectoryExplorer.h>
+#include <mrpt/system/config.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>  // for sprintf
 #include <mrpt/version.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #if STD_FS_IS_EXPERIMENTAL
@@ -41,6 +45,7 @@ namespace fs = std::filesystem;
 #include <conio.h>
 #include <direct.h>
 #include <io.h>
+#include <mrpt/core/winerror2str.h>
 #include <process.h>
 #include <sys/utime.h>
 #include <tlhelp32.h>
@@ -166,28 +171,131 @@ bool mrpt::system::directoryExists(const std::string& _path)
 #endif
 }
 
-bool mrpt::system::createDirectory(const string& dirName) { return fs::create_directory(dirName); }
+bool mrpt::system::createDirectory(const string& dirName)
+{
+  std::error_code ec;
+  fs::create_directory(dirName, ec);
+  return !ec && fs::is_directory(dirName, ec);
+}
 
 bool mrpt::system::deleteFile(const string& fileName) { return 0 == remove(fileName.c_str()); }
+
+namespace
+{
+/** Shell-like wildcard matching of a file name: '*' matches any run of
+ * characters and '?' any single one. Like the shell, wildcards do not match a
+ * leading dot unless the pattern starts with one. */
+bool globMatchFileName(std::string_view pattern, std::string_view name)
+{
+  // File names are case-insensitive in the default Windows filesystems:
+  const auto sameChar = [](char a, char b)
+  {
+#ifdef _WIN32
+    return std::tolower(static_cast<unsigned char>(a)) ==
+           std::tolower(static_cast<unsigned char>(b));
+#else
+    return a == b;
+#endif
+  };
+
+  if (!name.empty() && name.front() == '.' && (pattern.empty() || pattern.front() != '.'))
+  {
+    return false;
+  }
+
+  size_t p = 0;
+  size_t n = 0;
+  size_t starP = std::string_view::npos;
+  size_t starN = 0;
+  while (n < name.size())
+  {
+    if (p < pattern.size() && (pattern[p] == '?' || sameChar(pattern[p], name[n])))
+    {
+      p++;
+      n++;
+    }
+    else if (p < pattern.size() && pattern[p] == '*')
+    {
+      starP = p++;
+      starN = n;
+    }
+    else if (starP != std::string_view::npos)
+    {
+      p = starP + 1;
+      n = ++starN;
+    }
+    else
+    {
+      return false;
+    }
+  }
+  while (p < pattern.size() && pattern[p] == '*')
+  {
+    p++;
+  }
+  return p == pattern.size();
+}
+}  // namespace
 
 void mrpt::system::deleteFiles(const string& s)
 {
   MRPT_START
-  size_t len = s.size() + 20;
-  std::vector<char> aux(len);
-#ifdef _WIN32
-  os::sprintf(&aux[0], len, "del %s", &s[0]);
-  for (char* c = &aux[0]; *c; c++)
-    if (*c == '/') *c = '\\';
-  os::strcat(&aux[0], len, " /Q");
-#else
-  os::sprintf(&aux[0], len, "rm %s", &s[0]);
-#endif
 
-  int res = ::system(&aux[0]);
-  if (res)
+  // Only the file name part may have wildcards.
+  // (No shell involved: the names are never interpreted as commands.)
+  const fs::path pattern(s);
+  const fs::path dir = pattern.has_parent_path() ? pattern.parent_path() : fs::path(".");
+  const std::string namePattern = p2s(pattern.filename());
+
+  std::error_code ec;
+  size_t nDeleted = 0;
+  fs::directory_iterator it(dir, ec);
+  if (ec)
   {
-    fprintf(stderr, "[mrpt::system::deleteFiles] Warning: error invoking: `%s`\n", &aux[0]);
+    fprintf(
+        stderr, "[mrpt::system::deleteFiles] Warning: cannot list `%s`: %s\n", dir.string().c_str(),
+        ec.message().c_str());
+    return;
+  }
+  for (const fs::directory_iterator end; it != end; it.increment(ec))
+  {
+    if (ec)
+    {
+      fprintf(
+          stderr, "[mrpt::system::deleteFiles] Warning: error listing `%s`: %s\n",
+          dir.string().c_str(), ec.message().c_str());
+      break;
+    }
+    const auto& entry = *it;
+    std::error_code ec2;
+    // (a symbolic link to a directory is removed like any other file)
+    const auto st = entry.symlink_status(ec2);
+    if (ec2)
+    {
+      fprintf(
+          stderr, "[mrpt::system::deleteFiles] Warning: cannot stat `%s`: %s\n",
+          entry.path().string().c_str(), ec2.message().c_str());
+      continue;
+    }
+    if (st.type() == fs::file_type::directory ||
+        !globMatchFileName(namePattern, p2s(entry.path().filename())))
+    {
+      continue;
+    }
+    if (fs::remove(entry.path(), ec2))
+    {
+      nDeleted++;
+    }
+    else
+    {
+      fprintf(
+          stderr, "[mrpt::system::deleteFiles] Warning: could not delete `%s`: %s\n",
+          entry.path().string().c_str(), ec2.message().c_str());
+    }
+  }
+  if (nDeleted == 0)
+  {
+    fprintf(stderr, "[mrpt::system::deleteFiles] Warning: no file deleted for: `%s`\n", s.c_str());
   }
   MRPT_END
 }
@@ -242,13 +350,22 @@ std::string mrpt::system::getcwd() { return p2s(fs::current_path()); }
 std::string mrpt::system::getTempFileName()
 {
 #ifdef _WIN32
-  FILETIME tt;
-  GetSystemTimeAsFileTime(&tt);
-  const UINT uniq = static_cast<UINT>(tt.dwLowDateTime);
+  // uUnique=0 makes GetTempFileNameA generate a name from the current system
+  // time *and* verify no such file already exists, retrying until it finds a
+  // free one (and atomically creates that empty file). A nonzero uUnique
+  // (e.g. derived from GetSystemTimeAsFileTime(), whose low DWORD only
+  // changes every ~15 ms) skips that existence check entirely, so two calls
+  // made within the same clock tick silently return the *same* path.
   char TMP_PATH[MAX_PATH];
   char tmpPath[MAX_PATH];
-  GetTempPathA(MAX_PATH, tmpPath);
-  GetTempFileNameA(tmpPath, "mrpt", uniq, TMP_PATH);
+  if (GetTempPathA(MAX_PATH, tmpPath) == 0)
+  {
+    throw winerror2str("GetTempPath");
+  }
+  if (GetTempFileNameA(tmpPath, "mrpt", 0, TMP_PATH) == 0)
+  {
+    throw winerror2str("GetTempFileName");
+  }
   return std::string(TMP_PATH);
 #else
   char tmp[] = "/tmp/mrpt_tempXXXXXX";
@@ -268,21 +385,14 @@ std::string mrpt::system::getTempFileName()
 bool mrpt::system::renameFile(
     const string& oldFileName, const string& newFileName, std::string* error_msg)
 {
-  bool ret_err = 0 == rename(oldFileName.c_str(), newFileName.c_str());
+  const bool ok = 0 == rename(oldFileName.c_str(), newFileName.c_str());
 
   if (error_msg)
   {
-    if (ret_err)
-    {
-      *error_msg = strerror(errno);
-    }
-    else
-    {
-      *error_msg = "";
-    }
+    *error_msg = ok ? std::string() : std::string(strerror(errno));
   }
 
-  return ret_err;
+  return ok;
 }
 
 /*---------------------------------------------------------------
@@ -320,7 +430,15 @@ std::string mrpt::system::fileNameStripInvalidChars(
 ---------------------------------------------------------------*/
 uint64_t mrpt::system::getFileSize(const std::string& fileName)
 {
-  return fs::file_size(fs::path(fileName));
+  // Use the error_code overload: this function is documented to report errors
+  // via its return value, not by throwing.
+  std::error_code ec;
+  const auto sz = fs::file_size(fs::path(fileName), ec);
+  if (ec)
+  {
+    return static_cast<uint64_t>(-1);
+  }
+  return sz;
 }
 
 /** Replace the filename extension by another one.  */
@@ -383,56 +501,50 @@ mrpt::Clock::time_point mrpt::system::getFileModificationTime(const std::string&
 // Read docs in .h
 std::string mrpt::system::getShareMRPTDir()
 {
-  using std::string;
-  using std::vector;
-
-  static vector<string> sPaths;
-  static string sDetectedPath;
-  static bool is_first = true;
-  if (is_first)
+  static const std::string detectedPath = []() -> std::string
   {
-    is_first = false;
+    std::vector<std::string> paths;
 
-    // Source dir:
-    sPaths.push_back(string(MRPT_CMAKE_SOURCE_DIR) + string("/share/mrpt/"));
-    // Install dir:
-    sPaths.push_back(string(MRPT_CMAKE_INSTALL_PREFIX) + string("/share/mrpt/"));
+    // Source tree: mrpt_data is a sibling of this module:
+    paths.push_back(std::string(MRPT_SOURCE_BASE_DIRECTORY) + "/../mrpt_data/");
+    // Merged install prefix (e.g. /usr, /opt/ros/<distro>):
+    paths.push_back(std::string(MRPT_INSTALL_PREFIX_DIRECTORY) + "/share/mrpt_data/");
+    // Isolated colcon install, one prefix per package:
+    paths.push_back(std::string(MRPT_INSTALL_PREFIX_DIRECTORY) + "/../mrpt_data/share/mrpt_data/");
 
-    // Program path & ".." & "../..":
+    // Relative to the running program, for relocated installs:
     char buf[2048];
-    bool sBufOk = false;
+    bool bufOk = false;
 #ifdef _WIN32
-    sBufOk = (0 != GetModuleFileNameA(NULL, buf, sizeof(buf)));
+    bufOk = (0 != GetModuleFileNameA(nullptr, buf, sizeof(buf)));
 #endif
 #ifdef MRPT_OS_LINUX
-    ssize_t nRead = readlink("/proc/self/exe", buf, sizeof(buf));
+    const ssize_t nRead = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (nRead >= 0)
     {
       buf[nRead] = '\0';
     }
-    sBufOk = (-1 != nRead);
+    bufOk = (-1 != nRead);
 #endif
-
-    if (sBufOk)
+    if (bufOk)
     {
-      string sBuf = string(buf);
-      std::replace(sBuf.begin(), sBuf.end(), '\\', '/');
-      sBuf = extractFileDirectory(sBuf);
-      sPaths.push_back(sBuf + string("share/mrpt/"));
-      sPaths.push_back(sBuf + string("../share/mrpt/"));
-      sPaths.push_back(sBuf + string("../../share/mrpt/"));
+      std::string exeDir = std::string(buf);
+      std::replace(exeDir.begin(), exeDir.end(), '\\', '/');
+      exeDir = extractFileDirectory(exeDir);
+      paths.push_back(exeDir + "../share/mrpt_data/");
+      paths.push_back(exeDir + "../../share/mrpt_data/");
     }
 
-    for (const auto& e : sPaths)
+    for (const auto& p : paths)
     {
-      if (directoryExists(e))
+      if (directoryExists(p))
       {
-        sDetectedPath = e;
-        break;
+        return toAbsolutePath(p, true) + "/";
       }
     }
-  }
-  return sDetectedPath;
+    return {};
+  }();
+  return detectedPath;
 }
 
 std::string mrpt::system::toAbsolutePath(const std::string& path, bool resolveToCanonical)
