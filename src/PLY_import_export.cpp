@@ -59,14 +59,18 @@ WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 #pragma clang diagnostic ignored "-Wold-style-cast"
 #endif
 
+#include <mrpt/core/config.h>  // MRPT_IS_BIG_ENDIAN
 #include <mrpt/core/exceptions.h>
-#include <mrpt/core/reverse_bytes.h>
 #include <mrpt/system/string_utils.h>
 #include <mrpt/viz/PLY_import_export.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <map>
+#include <memory>
 
 using namespace std;
 using namespace mrpt;
@@ -126,7 +130,7 @@ struct PlyProperty
       PLY_DATA_TYPE External_type,
       PLY_DATA_TYPE Internal_type,
       size_t Offset,
-      [[maybe_unused]] bool Is_list = false,
+      bool Is_list = false,
       PLY_DATA_TYPE Count_external = PLY_INVALID,
       PLY_DATA_TYPE Count_internal = PLY_INVALID,
       size_t Count_offset = 0) :
@@ -134,6 +138,7 @@ struct PlyProperty
       external_type(External_type),
       internal_type(Internal_type),
       offset(Offset),
+      is_list(Is_list),
       count_external(Count_external),
       count_internal(Count_internal),
       count_offset(Count_offset)
@@ -665,6 +670,26 @@ void ply_put_obj_info(PlyFile* plyfile, const string& obj_info)
 /*  Reading  */
 /*************/
 
+namespace
+{
+/** Conversions from floating point that are defined for any input: converting
+ * a NaN, an infinity or an out-of-range value to an integer is undefined
+ * behavior, and PLY files can contain them. */
+int saturatedToInt(double v)
+{
+  if (std::isnan(v)) return 0;
+  if (v >= 2147483647.0) return std::numeric_limits<int>::max();
+  if (v <= -2147483648.0) return std::numeric_limits<int>::min();
+  return static_cast<int>(v);
+}
+unsigned int saturatedToUInt(double v)
+{
+  if (std::isnan(v) || v <= 0.0) return 0;
+  if (v >= 4294967295.0) return std::numeric_limits<unsigned int>::max();
+  return static_cast<unsigned int>(v);
+}
+}  // namespace
+
 /******************************************************************************
 Given a file pointer, get ready to read PLY data from the file.
 
@@ -686,7 +711,9 @@ PlyFile* ply_read(FILE* fp, vector<string>& elem_names)
   if (fp == nullptr) return (nullptr);
 
   /* create record for this object */
-  auto* plyfile = new PlyFile(fp);
+  // (freed on every early return and exception; released on success)
+  auto plyfileOwner = std::make_unique<PlyFile>(fp);
+  PlyFile* plyfile = plyfileOwner.get();
 
   /* read and parse the file's header */
   string orig_line;
@@ -743,7 +770,7 @@ PlyFile* ply_read(FILE* fp, vector<string>& elem_names)
 
   /* return a pointer to the file's information */
 
-  return (plyfile);
+  return plyfileOwner.release();
 }
 
 /******************************************************************************
@@ -773,7 +800,15 @@ PlyFile* ply_open_for_reading(
 
   /* create the PlyFile data structure */
 
+  // The file is closed if the header cannot be read (also on exceptions);
+  // on success it belongs to the PlyFile, closed by ply_close()
+  std::unique_ptr<FILE, int (*)(FILE*)> fileGuard(fp, &fclose);
+
   plyfile = ply_read(fp, elem_names);
+  if (plyfile)
+  {
+    fileGuard.release();
+  }
 
   /* determine the file type and version */
   if (plyfile)
@@ -1163,8 +1198,7 @@ void binary_get_element(PlyFile* plyfile, char* elem_ptr)
       if (!get_binary_item(
               fp, bin_file_type, prop->count_external, &int_val, &uint_val, &double_val))
       {
-        // Error...
-        fprintf(stderr, "RPly::binary_get_element: Error reading binary file!\n");
+        throw std::runtime_error("PLY: unexpected end of the binary data");
       }
 
       if (store_it)
@@ -1204,11 +1238,7 @@ void binary_get_element(PlyFile* plyfile, char* elem_ptr)
           if (!get_binary_item(
                   fp, bin_file_type, prop->external_type, &int_val, &uint_val, &double_val))
           {
-            // Error...
-            fprintf(
-                stderr,
-                "RPly::binary_get_element: Error reading binary "
-                "file!\n");
+            throw std::runtime_error("PLY: unexpected end of the binary data");
           }
 
           if (store_it)
@@ -1224,8 +1254,7 @@ void binary_get_element(PlyFile* plyfile, char* elem_ptr)
       if (!get_binary_item(
               fp, bin_file_type, prop->external_type, &int_val, &uint_val, &double_val))
       {
-        // Error...
-        fprintf(stderr, "RPly::binary_get_element: Error reading binary file!\n");
+        throw std::runtime_error("PLY: unexpected end of the binary data");
       }
 
       if (store_it)
@@ -1250,7 +1279,7 @@ void write_scalar_type(FILE* fp, PLY_DATA_TYPE code)
   /* make sure this is a valid code */
 
   if (code <= PLY_START_TYPE || code >= PLY_END_TYPE)
-    throw std::runtime_error(format("write_scalar_type: bad data code = %d", code));
+    throw std::runtime_error(mrpt::format("write_scalar_type: bad data code = %d", code));
 
   /* write the code to a file */
 
@@ -1309,7 +1338,7 @@ Exit:
 double get_item_value(char* item, int type)
 {
   unsigned char* puchar;
-  char* pchar;
+  signed char* pchar;
   short int* pshort;
   unsigned short int* pushort;
   int* pint;
@@ -1323,7 +1352,7 @@ double get_item_value(char* item, int type)
   switch (type)
   {
     case PLY_CHAR:
-      pchar = (char*)item;
+      pchar = (signed char*)item;
       int_value = *pchar;
       return ((double)int_value);
     case PLY_UCHAR:
@@ -1355,7 +1384,7 @@ double get_item_value(char* item, int type)
       double_value = *pdouble;
       return (double_value);
     default:
-      throw std::runtime_error(format("get_item_value: bad type = %d", type));
+      throw std::runtime_error(mrpt::format("get_item_value: bad type = %d", type));
   }
 }
 
@@ -1410,7 +1439,7 @@ void write_binary_item(FILE* fp, int int_val, unsigned int uint_val, double doub
       fwrite(&double_val, 8, 1, fp);
       break;
     default:
-      throw std::runtime_error(format("write_binary_item: bad type = %d", type));
+      throw std::runtime_error(mrpt::format("write_binary_item: bad type = %d", type));
   }
 }
 
@@ -1444,7 +1473,7 @@ void write_ascii_item(FILE* fp, int int_val, unsigned int uint_val, double doubl
       fprintf(fp, "%g ", double_val);
       break;
     default:
-      throw std::runtime_error(format("write_ascii_item: bad type = %d", type));
+      throw std::runtime_error(mrpt::format("write_ascii_item: bad type = %d", type));
   }
 }
 
@@ -1467,7 +1496,7 @@ void get_stored_item(void* ptr, int type, int* int_val, unsigned int* uint_val, 
   switch (type)
   {
     case PLY_CHAR:
-      *int_val = *((char*)ptr);
+      *int_val = *((signed char*)ptr);
       *uint_val = *int_val;
       *double_val = *int_val;
       break;
@@ -1498,18 +1527,36 @@ void get_stored_item(void* ptr, int type, int* int_val, unsigned int* uint_val, 
       break;
     case PLY_FLOAT:
       *double_val = *((float*)ptr);
-      *int_val = static_cast<int>(*double_val);
-      *uint_val = static_cast<unsigned int>(*double_val);
+      *int_val = saturatedToInt(*double_val);
+      *uint_val = saturatedToUInt(*double_val);
       break;
     case PLY_DOUBLE:
       *double_val = *((double*)ptr);
-      *int_val = static_cast<int>(*double_val);
-      *uint_val = static_cast<unsigned int>(*double_val);
+      *int_val = saturatedToInt(*double_val);
+      *uint_val = saturatedToUInt(*double_val);
       break;
     default:
-      throw std::runtime_error(format("get_stored_item: bad type = %d", type));
+      throw std::runtime_error(mrpt::format("get_stored_item: bad type = %d", type));
   }
 }
+
+namespace
+{
+/** Reads `nbytes` from the file, optionally reversing their order.
+ * \return false if the requested bytes could not be read. */
+bool readRaw(FILE* fp, void* ptr, size_t nbytes, bool reverse)
+{
+  if (fread(ptr, nbytes, 1, fp) != 1)
+  {
+    return false;
+  }
+  if (reverse)
+  {
+    std::reverse(static_cast<char*>(ptr), static_cast<char*>(ptr) + nbytes);
+  }
+  return true;
+}
+}  // namespace
 
 /******************************************************************************
 Get the value of an item from a binary file, and place the result
@@ -1535,19 +1582,31 @@ int get_binary_item(
 
   ptr = (void*)c;
 
+  // If the byte order of the file differs from the native one, the raw bytes
+  // of each item must be swapped before they are interpreted:
+#if MRPT_IS_BIG_ENDIAN
+  const bool do_reverse = (bin_file_type == PLY_BINARY_LE);
+#else
+  const bool do_reverse = (bin_file_type == PLY_BINARY_BE);
+#endif
+
   switch (type)
   {
     case PLY_CHAR:
-      if (fread(ptr, 1, 1, fp) != 1)
+    {
+      if (!readRaw(fp, ptr, 1, do_reverse))
       {
         return 0;
       }
-      *int_val = *((char*)ptr);
+      // Sign-extend by hand: plain char may be unsigned on this platform.
+      const auto b = static_cast<unsigned char>(c[0]);
+      *int_val = b > 0x7f ? static_cast<int>(b) - 0x100 : static_cast<int>(b);
       *uint_val = *int_val;
       *double_val = *int_val;
       break;
+    }
     case PLY_UCHAR:
-      if (fread(ptr, 1, 1, fp) != 1)
+      if (!readRaw(fp, ptr, 1, do_reverse))
       {
         return 0;
       }
@@ -1556,7 +1615,7 @@ int get_binary_item(
       *double_val = *uint_val;
       break;
     case PLY_SHORT:
-      if (fread(ptr, 2, 1, fp) != 1)
+      if (!readRaw(fp, ptr, 2, do_reverse))
       {
         return 0;
       }
@@ -1565,7 +1624,7 @@ int get_binary_item(
       *double_val = *int_val;
       break;
     case PLY_USHORT:
-      if (fread(ptr, 2, 1, fp) != 1)
+      if (!readRaw(fp, ptr, 2, do_reverse))
       {
         return 0;
       }
@@ -1574,7 +1633,7 @@ int get_binary_item(
       *double_val = *uint_val;
       break;
     case PLY_INT:
-      if (fread(ptr, 4, 1, fp) != 1)
+      if (!readRaw(fp, ptr, 4, do_reverse))
       {
         return 0;
       }
@@ -1583,7 +1642,7 @@ int get_binary_item(
       *double_val = *int_val;
       break;
     case PLY_UINT:
-      if (fread(ptr, 4, 1, fp) != 1)
+      if (!readRaw(fp, ptr, 4, do_reverse))
       {
         return 0;
       }
@@ -1592,44 +1651,25 @@ int get_binary_item(
       *double_val = *uint_val;
       break;
     case PLY_FLOAT:
-      if (fread(ptr, 4, 1, fp) != 1)
+      if (!readRaw(fp, ptr, 4, do_reverse))
       {
         return 0;
       }
       *double_val = *((float*)ptr);
-      *int_val = static_cast<int>(*double_val);
-      *uint_val = static_cast<unsigned int>(*double_val);
+      *int_val = saturatedToInt(*double_val);
+      *uint_val = saturatedToUInt(*double_val);
       break;
     case PLY_DOUBLE:
-      if (fread(ptr, 8, 1, fp) != 1)
+      if (!readRaw(fp, ptr, 8, do_reverse))
       {
         return 0;
       }
       *double_val = *((double*)ptr);
-      *int_val = static_cast<int>(*double_val);
-      *uint_val = static_cast<unsigned int>(*double_val);
+      *int_val = saturatedToInt(*double_val);
+      *uint_val = saturatedToUInt(*double_val);
       break;
     default:
-      throw std::runtime_error(format("get_binary_item: bad type = %d", type));
-  }
-
-// Added by JL:
-// If the Big/Little endian format in the file is different than the native
-// format, do the conversion:
-#if MRPT_IS_BIG_ENDIAN
-  const bool do_reverse = (bin_file_type == PLY_BINARY_LE);
-#else
-  const bool do_reverse = (bin_file_type == PLY_BINARY_BE);
-#endif
-
-  if (do_reverse)
-  {
-    int int_val2 = *int_val;
-    unsigned int uint_val2 = *uint_val;
-    double double_val2 = *double_val;
-    mrpt::reverseBytes(int_val2, *int_val);
-    mrpt::reverseBytes(uint_val2, *uint_val);
-    mrpt::reverseBytes(double_val2, *double_val);
+      throw std::runtime_error(mrpt::format("get_binary_item: bad type = %d", type));
   }
 
   return 1;
@@ -1673,12 +1713,12 @@ void get_ascii_item(
     case PLY_FLOAT:
     case PLY_DOUBLE:
       *double_val = atof(word);
-      *int_val = static_cast<int>(*double_val);
-      *uint_val = static_cast<unsigned int>(*double_val);
+      *int_val = saturatedToInt(*double_val);
+      *uint_val = saturatedToUInt(*double_val);
       break;
 
     default:
-      throw std::runtime_error(format("get_ascii_item: bad type = %d", type));
+      throw std::runtime_error(mrpt::format("get_ascii_item: bad type = %d", type));
   }
 }
 
@@ -1740,7 +1780,7 @@ void store_item(char* item, int type, int int_val, unsigned int uint_val, double
       *pdouble = double_val;
       break;
     default:
-      throw std::runtime_error(format("store_item: bad type = %d", type));
+      throw std::runtime_error(mrpt::format("store_item: bad type = %d", type));
   }
 }
 
@@ -1755,6 +1795,11 @@ Entry:
 
 void add_element(PlyFile* plyfile, const vector<string>& words)
 {
+  if (words.size() < 3)
+  {
+    throw std::runtime_error("PLY: malformed 'element' line in the header");
+  }
+
   /* create the new element */
   plyfile->elems.emplace_back();
 
@@ -1792,6 +1837,16 @@ Entry:
 
 void add_property(PlyFile* plyfile, const vector<string>& words)
 {
+  const bool isList = words.size() > 1 && words[1] == "list";
+  if (plyfile->elems.empty())
+  {
+    throw std::runtime_error("PLY: 'property' line found before any 'element' in the header");
+  }
+  if (words.size() < (isList ? 5u : 3u))
+  {
+    throw std::runtime_error("PLY: malformed 'property' line in the header");
+  }
+
   /* add this property to the list of properties of the current element */
   PlyElement* elem = &(*plyfile->elems.rbegin());
 
@@ -1799,7 +1854,7 @@ void add_property(PlyFile* plyfile, const vector<string>& words)
 
   /* create the new property */
 
-  if (words[1] == "list")
+  if (isList)
   { /* is a list */
     prop.count_external = get_prop_type(words[2]);
     prop.external_type = get_prop_type(words[3]);
@@ -1822,10 +1877,21 @@ Entry:
   line    - line containing comment
 ******************************************************************************/
 
+/** Like mrpt::system::trim(), but also dropping the line terminators kept by
+ *  the raw header lines (including the CR of CRLF files). */
+std::string trimHeaderLine(const std::string& s)
+{
+  const char* ws = " \t\r\n";
+  const size_t b = s.find_first_not_of(ws);
+  if (b == std::string::npos) return {};
+  const size_t e = s.find_last_not_of(ws);
+  return s.substr(b, e - b + 1);
+}
+
 void add_comment(PlyFile* plyfile, const string& line)
 {
   /* skip over "comment" and leading spaces and tabs */
-  ply_put_comment(plyfile, mrpt::system::trim(line.substr(7)));
+  ply_put_comment(plyfile, trimHeaderLine(line.substr(7)));
 }
 
 /******************************************************************************
@@ -1839,7 +1905,7 @@ Entry:
 void add_obj_info(PlyFile* plyfile, const string& line)
 {
   /* skip over "obj_info" and leading spaces and tabs */
-  ply_put_obj_info(plyfile, mrpt::system::trim(line.substr(8)));
+  ply_put_obj_info(plyfile, trimHeaderLine(line.substr(8)));
 }
 
 /******************************************************************************
@@ -1875,6 +1941,18 @@ const std::array<PlyProperty, 5> vert_props = {
     PlyProperty("timestamp", PLY_FLOAT, PLY_FLOAT, offsetof(TVertex, timestamp)),
 };
 
+/** Per-channel color, as written by most other tools. Kept apart from
+ *  vert_props since the on-file type decides how the values must be scaled. */
+const std::array<PlyProperty, 3> vert_color_props = {
+    PlyProperty("red", PLY_UCHAR, PLY_FLOAT, offsetof(TVertex, r)),
+    PlyProperty("green", PLY_UCHAR, PLY_FLOAT, offsetof(TVertex, g)),
+    PlyProperty("blue", PLY_UCHAR, PLY_FLOAT, offsetof(TVertex, b)),
+};
+
+/** Color channels stored as an integer type use the [0,255] range; float and
+ *  double ones are already normalized to [0,1]. */
+bool plyTypeIsNormalizedFloat(PLY_DATA_TYPE t) { return t == PLY_FLOAT || t == PLY_DOUBLE; }
+
 struct TFace
 {
   float intensity;      /* this user attaches intensity to faces */
@@ -1904,6 +1982,13 @@ bool PLY_Importer::loadFromPlyFile(
     int file_type;
     float version;
     PlyFile* ply = ply_open_for_reading(filename.c_str(), elist, &file_type, &version);
+    if (!ply)
+    {
+      m_ply_import_last_error = "Error opening for reading file: '" + filename + "'";
+      return false;
+    }
+    // Closed on every exit, including the exceptions of a malformed file:
+    std::unique_ptr<PlyFile, void (*)(PlyFile*)> plyGuard(ply, &ply_close);
 
     /* go through each kind of element that we learned is in the file */
     /* and read them */
@@ -1913,8 +1998,8 @@ bool PLY_Importer::loadFromPlyFile(
       /* get the description of the first element */
       int num_elems = 0, nprops = 0;
 
-      // vector<PlyProperty> plist =
-      ply_get_element_description(ply, elem_name, num_elems, nprops);
+      const std::vector<PlyProperty> plist =
+          ply_get_element_description(ply, elem_name, num_elems, nprops);
 
       /* print the name of the element, for debugging */
       // printf ("element %s %d\n", elem_name, num_elems);
@@ -1924,6 +2009,23 @@ bool PLY_Importer::loadFromPlyFile(
 
       /* set up for getting vertex elements */
       for (const auto& vert_prop : vert_props) ply_get_property(ply, elem_name, &vert_prop);
+
+      // Per-channel color, if the file provides it. Each channel keeps its
+      // own scale: nothing stops a file from mixing "uchar red" with
+      // "float green".
+      std::array<float, 3> colorScale = {1.0f, 1.0f, 1.0f};
+      for (size_t ci = 0; ci < vert_color_props.size(); ci++)
+      {
+        const auto& colProp = vert_color_props[ci];
+        for (const auto& fileProp : plist)
+        {
+          if (fileProp.name != colProp.name) continue;
+          ply_get_property(ply, elem_name, &colProp);
+          colorScale[ci] =
+              plyTypeIsNormalizedFloat(fileProp.external_type) ? 1.0f : (1.0f / 255.0f);
+          break;
+        }
+      }
 
       /* grab all the vertex elements */
       this->PLY_import_set_vertex_count(num_elems);
@@ -1935,14 +2037,14 @@ bool PLY_Importer::loadFromPlyFile(
         /* grab an element from the file */
         ply_get_element(ply, reinterpret_cast<void*>(&pt));
         const TPoint3Df xyz(pt.x, pt.y, pt.z);
-        if (pt.intensity != VAL_NOT_SET)
-        {  // Grayscale
-          const TColorf col(pt.intensity, pt.intensity, pt.intensity);
+        if (pt.r != VAL_NOT_SET && pt.g != VAL_NOT_SET && pt.b != VAL_NOT_SET)
+        {  // RGB takes precedence over the grayscale channel, if both exist
+          const TColorf col(pt.r * colorScale[0], pt.g * colorScale[1], pt.b * colorScale[2]);
           this->PLY_import_set_vertex(j, xyz, &col);
         }
-        else if (pt.r != VAL_NOT_SET && pt.g != VAL_NOT_SET && pt.b != VAL_NOT_SET)
-        {  // RGB
-          const TColorf col(pt.r, pt.g, pt.b);
+        else if (pt.intensity != VAL_NOT_SET)
+        {  // Grayscale
+          const TColorf col(pt.intensity, pt.intensity, pt.intensity);
           this->PLY_import_set_vertex(j, xyz, &col);
         }
         else
@@ -1970,8 +2072,7 @@ bool PLY_Importer::loadFromPlyFile(
       *file_obj_info = std::vector<std::string>(strs);
     }
 
-    /* close the PLY file */
-    ply_close(ply);
+    /* (the PLY file is closed by plyGuard) */
 
     // All OK:
     m_ply_import_last_error = std::string();
@@ -2027,7 +2128,7 @@ bool PLY_Exporter::saveToPlyFile(
     {
       // Find out if we have color:
       TPoint3Df pt;
-      bool pt_has_color;
+      bool pt_has_color = false;
       TColorf pt_color;
       this->PLY_export_get_vertex(0, pt, pt_has_color, pt_color);
 
@@ -2036,7 +2137,15 @@ bool PLY_Exporter::saveToPlyFile(
       ply_describe_property(ply, "vertex", &vert_props[1]);  // y
       ply_describe_property(ply, "vertex", &vert_props[2]);  // z
 
-      if (pt_has_color) ply_describe_property(ply, "vertex", &vert_props[3]);  // intensity
+      if (pt_has_color)
+      {
+        ply_describe_property(ply, "vertex", &vert_props[3]);  // intensity
+        // ...plus the per-channel color most other tools expect:
+        for (const auto& colProp : vert_color_props)
+        {
+          ply_describe_property(ply, "vertex", &colProp);
+        }
+      }
     }
 
     ply_element_count(ply, "face", nfaces);
@@ -2056,7 +2165,7 @@ bool PLY_Exporter::saveToPlyFile(
     for (size_t i = 0; i < nverts; i++)
     {
       TPoint3Df pt;
-      bool pt_has_color;
+      bool pt_has_color = false;
       TColorf pt_color;
       this->PLY_export_get_vertex(i, pt, pt_has_color, pt_color);
 
@@ -2066,9 +2175,18 @@ bool PLY_Exporter::saveToPlyFile(
       ver.z = pt.z;
 
       if (pt_has_color)
+      {
         ver.intensity = (1.0f / 3.0f) * (pt_color.R + pt_color.G + pt_color.B);
+        // The "red"/"green"/"blue" properties are declared as uchar, so the
+        // writer converts these [0,1] floats to the [0,255] file range:
+        ver.r = pt_color.R * 255.0f;
+        ver.g = pt_color.G * 255.0f;
+        ver.b = pt_color.B * 255.0f;
+      }
       else
+      {
         ver.intensity = 0.5;
+      }
 
       ply_put_element(ply, (void*)&ver);
     }

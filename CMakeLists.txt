@@ -58,6 +58,7 @@ set(LIB_SOURCES
   src/CFrustum.cpp
   src/CGeneralizedEllipsoidTemplate.cpp
   src/CGridPlaneXY.cpp
+  src/CLight.cpp
   src/CGridPlaneXZ.cpp
   src/CMesh3D.cpp
   src/CMesh.cpp
@@ -94,9 +95,27 @@ set(LIB_SOURCES
 
 set(LIB_UNIT_TEST_SOURCES
   tests/bimap_serialize_unittest.cpp
+  tests/CAnimatedAssimpModel_unittest.cpp
+  tests/CAssimpModel_unittest.cpp
   tests/CFileGZStreams_unittest.cpp
+  tests/CGeneralizedEllipsoid_unittest.cpp
+  tests/COrbitCameraController_unittest.cpp
+  tests/CPolyhedron_unittest.cpp
   tests/CSerializable_unittest.cpp
+  tests/CVisualObject_unittest.cpp
+  tests/ChangeTracking_unittest.cpp
+  tests/legacy_serialization_unittest.cpp
+  tests/MiscVisualObjects_unittest.cpp
+  tests/MiscVisualObjects2_unittest.cpp
+  tests/PLY_import_export_unittest.cpp
+  tests/RayTracingAndBounds_unittest.cpp
+  tests/Viewport_extra_unittest.cpp
+  tests/pose_pdfs_unittest.cpp
+  tests/RenderBuffers_unittest.cpp
+  tests/Scene_Viewport_unittest.cpp
+  tests/SchemeSerialization_unittest.cpp
   tests/serializations_unittest.cpp
+  tests/StockObjects_unittest.cpp
   tests/stl_serialize_unittest.cpp
 )
 
@@ -137,6 +156,7 @@ set(LIB_PUBLIC_HEADERS
   include/mrpt/viz/CAssimpModel.h
   include/mrpt/viz/TTriangle.h
   include/mrpt/viz/CCamera.h
+  include/mrpt/viz/CLight.h
   include/mrpt/viz/CCylinder.h
   include/mrpt/viz/CPointCloud.h
   include/mrpt/viz/CUBE_TEXTURE_FACE.h
