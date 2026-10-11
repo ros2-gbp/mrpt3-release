@@ -71,6 +71,14 @@ set(LIB_UNIT_TEST_SOURCES
   tests/CTextFileLinesParser_unittest.cpp
   tests/vector_loadsave_unittest.cpp
   tests/zip_unittest.cpp
+  tests/vector_loadsave_extra_unittest.cpp
+  tests/CStream_unittest.cpp
+  tests/CMemoryStream_extra_unittest.cpp
+  tests/CPipe_extra_unittest.cpp
+  tests/CCompressedStreams_extra_unittest.cpp
+  tests/file_streams_unittest.cpp
+  tests/compression_unittest.cpp
+  tests/misc_io_unittest.cpp
 )
 
 # These tests are moved to mrpt_viz since that's the lowest-level module that includes all dependencies.
@@ -135,8 +143,12 @@ if(CMAKE_MRPT_HAS_ZLIB)
   endif()
 
   if (NOT "${io_EXTRA_SRCS}" STREQUAL "")
+    # The bundled zconf.h only includes <unistd.h> (lseek, read, etc.) if
+    # HAVE_UNISTD_H is defined; modern compilers reject implicit declarations.
+    include(CheckIncludeFile)
+    check_include_file(unistd.h HAVE_UNISTD_H)
     if (HAVE_UNISTD_H)
-      set(extra_flags2_ "-include unistd.h")
+      set(extra_flags2_ "-DHAVE_UNISTD_H")
     endif()
 
     # Strip gcov instrumentation from bundled zlib sources; coverage of
@@ -162,6 +174,13 @@ endif()
 mrpt_add_python_module(io
   python_bindings/mrpt_io_py.cpp
 )
+
+# archiveFrom() binds mrpt_serialization's CArchive to mrpt_io streams, so only
+# the Python module (not the C++ library) needs mrpt_serialization.
+if (TARGET _bindings)
+  find_package(mrpt_serialization REQUIRED)
+  target_link_libraries(_bindings PRIVATE mrpt::mrpt_serialization)
+endif()
 
 mrpt_add_python_binding_test(io
   SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/tests/python_io_test.py
