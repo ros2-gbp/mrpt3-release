@@ -269,9 +269,7 @@ ptgConfiguratorframe::ptgConfiguratorframe(wxWindow* parent, [[maybe_unused]] wx
   FlexGridSizer4b->Add(
       cbHighlightOnePath, 1, wxALL | wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL, 5);
   slidPathHighlight = new wxSlider(Panel1, ID_SLIDER1, 0, 0, 100);
-  FlexGridSizer4b->Add(
-      slidPathHighlight, 1, wxALL | wxEXPAND | wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL,
-      5);
+  FlexGridSizer4b->Add(slidPathHighlight, 1, wxALL | wxEXPAND, 5);
   edIndexHighlightPath = new wxSpinCtrl(
       Panel1, ID_SPINCTRL2, _T("0"), wxDefaultPosition, wxDefaultSize, 0, 0, 100, 0,
       _T("ID_SPINCTRL2"));
@@ -287,9 +285,7 @@ ptgConfiguratorframe::ptgConfiguratorframe(wxWindow* parent, [[maybe_unused]] wx
   edSelectedTrajCmd = new wxTextCtrl(
       Panel1, ID_TEXTCTRL_SEL_TRAJ, _("Cmd: (none)"), wxDefaultPosition, wxSize(50, -1),
       wxTE_READONLY, wxDefaultValidator, _T("ID_TEXTCTRL_SEL_TRAJ"));
-  FlexGridSizer4b->Add(
-      edSelectedTrajCmd, 1, wxALL | wxEXPAND | wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL,
-      5);
+  FlexGridSizer4b->Add(edSelectedTrajCmd, 1, wxALL | wxEXPAND, 5);
 
   FlexGridSizer4b->AddGrowableCol(1);
   FlexGridSizer4b->AddGrowableCol(4);
@@ -913,15 +909,16 @@ void ptgConfiguratorframe::rebuild3Dview()
         {
           timer.Tic();
           ptg->updateClearance(ox, oy, cd);
-          ptg->updateClearancePost(cd, TP_Obstacles);
           tim_build_cd = timer.Tac();
         }
 
         timer.Tic();
         cd.renderAs3DObject(
-            *gl_TPSpace_clearance, -1.0, 1.0, -1.0, 1.0, 0.05, false /*interpolate*/);
+            *gl_TPSpace_clearance, -1.0, 1.0, -1.0, 1.0, 0.05,
+            mrpt::nav::ClearanceQuery::AtDistance);
         cd.renderAs3DObject(
-            *gl_TPSpace_clearance_interp, -1.0, 1.0, -1.0, 1.0, 0.05, true /*interpolate*/);
+            *gl_TPSpace_clearance_interp, -1.0, 1.0, -1.0, 1.0, 0.05,
+            mrpt::nav::ClearanceQuery::MeanUpToDistance);
         const double tim_render_cd = timer.Tac();
 
         StatusBar1->SetStatusText(
@@ -992,9 +989,9 @@ void ptgConfiguratorframe::rebuild3Dview()
             d = 0;
             done = true;
           }
-          uint32_t step;
-          if (!ptg->getPathStepForDist(static_cast<uint16_t>(k), d, step)) continue;
-          const auto p = ptg->getPathPose(static_cast<uint16_t>(k), step);
+          const auto step = ptg->getPathStepForDist(static_cast<uint16_t>(k), d);
+          if (!step) continue;
+          const auto p = ptg->getPathPose(static_cast<uint16_t>(k), *step);
           ptg->add_robotShape_to_setOfLines(sol, mrpt::poses::CPose2D(p));
         }
       }
@@ -1131,11 +1128,11 @@ void ptgConfiguratorframe::rebuild3Dview()
           1);
 
       // Sanity check: reproject TP_target back to WS:
-      uint32_t check_step;
-      if (ptg->getPathStepForDist(
-              static_cast<uint16_t>(k), norm_d * ptg->getRefDistance(), check_step))
+      if (const auto check_step =
+              ptg->getPathStepForDist(static_cast<uint16_t>(k), norm_d * ptg->getRefDistance());
+          check_step)
       {
-        gl_WS_target_reprojected->setPose(ptg->getPathPose(static_cast<uint16_t>(k), check_step));
+        gl_WS_target_reprojected->setPose(ptg->getPathPose(static_cast<uint16_t>(k), *check_step));
         gl_WS_target_reprojected->setName("WS-Target-reproj");
       }
       else
