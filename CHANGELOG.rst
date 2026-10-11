@@ -2,6 +2,61 @@
 Changelog for package mrpt_io
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.2 (2026-10-11)
+------------------
+
+3.5.1 (2026-10-09)
+------------------
+
+3.5.0 (2026-10-07)
+------------------
+* Python bindings: docstrings for all members, regenerated .pyi stubs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.4.0 (2026-10-04)
+------------------
+* Python: commit generated .pyi type stubs for all modules
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.1 (2026-09-29)
+------------------
+* Increase test coverage and fix the bugs found in loggers, file helpers, compressed streams and pipes.
+* Fix ROS build farm builds on Fedora and RHEL: declare zlib dependency, define HAVE_UNISTD_H for bundled zlib.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.0 (2026-09-26)
+------------------
+* Python bindings: datasets, maps, localization, sensors (+ fixes) (`#1429 <https://github.com/MRPT/mrpt/issues/1429>`_)
+* changelogs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.2.0 (2026-09-16)
+------------------
+* Merge branch 'develop' into fix/stereo-rectify-map-axis-swap
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+* test(mrpt_io): raise unit test coverage of streams, compression and path helpers (63%->82% lines) (`#1392 <https://github.com/MRPT/mrpt/issues/1392>`_).
+* fix(mrpt_io): duplicate `mrpt::io::CompressionType` definition broke including both detect_compression.h and compression_options.h in the same translation unit.
+* fix(mrpt_io): zip::decompress()'s std::vector overload passed zlib an uninitialized output-buffer capacity.
+* fix(mrpt_io): CMemoryStream::Seek() from-end offsets were ignored and could underflow on an empty stream.
+* fix(mrpt_io): CStream::getline() left a stray unwritten byte at end-of-stream.
+* fix(mrpt_io): vectorNumericFromTextFile() discarded fscanf() failures, never cleared its output vector, and leaked the FILE handle.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.3 (2026-08-12)
+------------------
+
+3.1.2 (2026-07-07)
+------------------
+
+3.1.1 (2026-07-04)
+------------------
+
+3.1.0 (2026-07-03)
+------------------
+
 3.0.4 (2026-06-17)
 ------------------
 
