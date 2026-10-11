@@ -35,10 +35,12 @@ class CSimplePointsMap : public CPointsMap
   DEFINE_SERIALIZABLE(CSimplePointsMap, mrpt::maps)
 
  public:
+  // Constructors are defined in the .cpp file: inlining them in user code
+  // triggers wrong devirtualization in some GCC versions with LTO.
   /** Default constructor */
-  CSimplePointsMap() = default;
-  explicit CSimplePointsMap(const CPointsMap& o) { CPointsMap::operator=(o); }
-  CSimplePointsMap(const CSimplePointsMap& o) : CPointsMap() { CPointsMap::operator=(o); }
+  CSimplePointsMap();
+  explicit CSimplePointsMap(const CPointsMap& o);
+  CSimplePointsMap(const CSimplePointsMap& o);
   CSimplePointsMap& operator=(const CPointsMap& o)
   {
     CPointsMap::operator=(o);
@@ -105,7 +107,6 @@ class CSimplePointsMap : public CPointsMap
   /** @} */
 
   // See base docs
-  const mrpt::maps::CSimplePointsMap* getAsSimplePointsMap() const override { return this; }
 
  protected:
   /** Clear the map, erasing all the points.

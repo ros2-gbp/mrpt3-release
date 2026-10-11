@@ -14,6 +14,7 @@
 #pragma once
 
 #include <mrpt/config/CLoadableOptions.h>
+#include <mrpt/config/OptionsCapable.h>
 #include <mrpt/containers/CDynamicGrid.h>
 #include <mrpt/containers/NonCopiableData.h>
 #include <mrpt/core/safe_pointers.h>
@@ -66,7 +67,8 @@ namespace mrpt::maps
 class COccupancyGridMap2D :
     public CMetricMap,
     public CLogOddsGridMap2D<OccGridCellTraits::cellType>,
-    public mrpt::maps::NearestNeighborsCapable
+    public mrpt::maps::NearestNeighborsCapable,
+    public mrpt::config::OptionsCapable
 {
   DEFINE_SERIALIZABLE(COccupancyGridMap2D, mrpt::maps)
  public:
@@ -506,9 +508,9 @@ class COccupancyGridMap2D :
     /** Enabled: Rays widen with distance to approximate the real behavior
      * of lasers, disabled: insert rays as simple lines (Default=false) */
     bool wideningBeamsWithDistance{false};
-    /** (Default: 0.8) Step size for ray-tracing in sonarSimulator() and
-     * laserScanSimulator(), in cell units. Set <1 for finer tracing or >1 to
-     * speed it up. Not serialized. */
+    /** Unused: kept for backwards compatibility. Ray-tracing in
+     * sonarSimulator() and laserScanSimulator() visits exactly all the cells
+     * crossed by each ray. Not serialized. */
     double raytraceStepSizeInCellUnits{0.8};
   };
 
@@ -610,6 +612,9 @@ class COccupancyGridMap2D :
     bool enableLikelihoodCache{true};
   } likelihoodOptions;
 
+  // mrpt::config::OptionsCapable interface:
+  [[nodiscard]] std::map<std::string, mrpt::config::CLoadableOptions*> optionsByName() override;
+
   /** Auxiliary private class. */
   using TPairLikelihoodIndex = std::pair<double, mrpt::math::TPoint2D>;
 
@@ -676,14 +681,12 @@ class COccupancyGridMap2D :
    * Voronoi diagram with \a buildVoronoiDiagram */
   [[nodiscard]] uint16_t getVoronoiClearance(int cx, int cy) const
   {
-#ifdef _DEBUG
-    ASSERT_GE_(cx, 0);
-    ASSERT_GE_(cy, 0);
-    ASSERT_LE_(cx, int(m_voronoi_diagram.getSizeX()));
-    ASSERT_LE_(cy, int(m_voronoi_diagram.getSizeY()));
-#endif
-    const uint16_t* cell = m_voronoi_diagram.cellByIndex(cx, cy);
-    return *cell;
+    if (cx < 0 || cy < 0) return 0;
+    const uint16_t* cell =
+        m_voronoi_diagram.cellByIndex(static_cast<unsigned int>(cx), static_cast<unsigned int>(cy));
+    // Out-of-bounds (including negative cx/cy wrapped to huge unsigned
+    // values above) reads as "not on the Voronoi diagram":
+    return cell ? *cell : 0;
   }
 
  protected:
@@ -831,7 +834,7 @@ class COccupancyGridMap2D :
 
   /** Methods for TLaserSimulUncertaintyParams in
    * laserScanSimulatorWithUncertainty() */
-  enum TLaserSimulUncertaintyMethod
+  enum TLaserSimulUncertaintyMethod : int
   {
     /** Performs an unscented transform */
     sumUnscented = 0,
@@ -842,7 +845,7 @@ class COccupancyGridMap2D :
   /** Input params for laserScanSimulatorWithUncertainty() */
   struct TLaserSimulUncertaintyParams
   {
-    /** (Default: sumMonteCarlo) Select the method to do the uncertainty
+    /** (Default: sumUnscented) Select the method to do the uncertainty
      * propagation */
     TLaserSimulUncertaintyMethod method{sumUnscented};
     /** @name Parameters for each uncertainty method
@@ -983,7 +986,8 @@ class COccupancyGridMap2D :
       int py = m_size_y - 1 - y2idx(lm->pose_mean.y);
       img.rectangle({px - 7, py - 7}, {px + 7, py + 7}, marks_color);
       img.rectangle({px - 6, py - 6}, {px + 6, py + 6}, marks_color);
-      if (addTextLabels) img.textOut({px, py - 8}, format("%u", i), mrpt::img::TColor::black());
+      if (addTextLabels)
+        img.textOut({px, py - 8}, mrpt::format("%u", i), mrpt::img::TColor::black());
     }
     return img.saveToFile(file.c_str());
     MRPT_END
