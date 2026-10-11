@@ -25,6 +25,7 @@
 #endif
 
 // My classes:
+#include <mrpt/viz/CAnimatedAssimpModel.h>
 #include <mrpt/viz/CArrow.h>
 #include <mrpt/viz/CAssimpModel.h>
 #include <mrpt/viz/CAxis.h>
@@ -42,6 +43,7 @@
 #include <mrpt/viz/CGeneralizedEllipsoidTemplate.h>
 #include <mrpt/viz/CGridPlaneXY.h>
 #include <mrpt/viz/CGridPlaneXZ.h>
+#include <mrpt/viz/CLight.h>
 #include <mrpt/viz/CMesh.h>
 #include <mrpt/viz/CMesh3D.h>
 #include <mrpt/viz/CMeshFast.h>
@@ -102,6 +104,7 @@ TEST(SerializeTestOpenGL, WriteReadToMem)
       CLASS_ID(CPolyhedron),
       CLASS_ID(CArrow),
       CLASS_ID(CCamera),
+      CLASS_ID(CLight),
       CLASS_ID(CEllipsoid3D),
       CLASS_ID(CGridPlaneXZ),
       CLASS_ID(Scene),
@@ -112,7 +115,16 @@ TEST(SerializeTestOpenGL, WriteReadToMem)
       CLASS_ID(CEllipsoidInverseDepth2D),
       CLASS_ID(CEllipsoidInverseDepth3D),
       CLASS_ID(CEllipsoidRangeBearing2D),
-      CLASS_ID(COctoMapVoxels)};
+      CLASS_ID(COctoMapVoxels),
+      CLASS_ID(CAssimpModel),
+      CLASS_ID(CAnimatedAssimpModel),
+      CLASS_ID(CColorBar),
+      CLASS_ID(CEllipsoid2D),
+      CLASS_ID(CMesh3D),
+      CLASS_ID(CMeshFast),
+      CLASS_ID(CSetOfTexturedTriangles),
+      CLASS_ID(CVectorField2D),
+      CLASS_ID(CVectorField3D)};
 
   for (auto& cl : lstClasses)
   {

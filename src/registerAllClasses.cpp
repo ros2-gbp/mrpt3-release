@@ -15,6 +15,7 @@
 #include <mrpt/core/initializer.h>
 
 // My classes:
+#include <mrpt/viz/CAnimatedAssimpModel.h>
 #include <mrpt/viz/CArrow.h>
 #include <mrpt/viz/CAssimpModel.h>
 #include <mrpt/viz/CAxis.h>
@@ -32,6 +33,7 @@
 #include <mrpt/viz/CGeneralizedEllipsoidTemplate.h>
 #include <mrpt/viz/CGridPlaneXY.h>
 #include <mrpt/viz/CGridPlaneXZ.h>
+#include <mrpt/viz/CLight.h>
 #include <mrpt/viz/CMesh.h>
 #include <mrpt/viz/CMesh3D.h>
 #include <mrpt/viz/CMeshFast.h>
@@ -82,6 +84,7 @@ MRPT_INITIALIZER(registerAllClasses_mrpt_viz)
   // mrpt::viz classes:
   DO_REGISTER(Scene);
   DO_REGISTER(Viewport);
+  DO_REGISTER(CAnimatedAssimpModel);
   DO_REGISTER(CArrow);
   DO_REGISTER(CAssimpModel);
   DO_REGISTER(CAxis);
@@ -98,6 +101,7 @@ MRPT_INITIALIZER(registerAllClasses_mrpt_viz)
   DO_REGISTER(CFrustum);
   DO_REGISTER(CGridPlaneXY);
   DO_REGISTER(CGridPlaneXZ);
+  DO_REGISTER(CLight);
   DO_REGISTER(CMesh);
   DO_REGISTER(CMesh3D);
   DO_REGISTER(CMeshFast);

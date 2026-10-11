@@ -14,6 +14,7 @@
 #pragma once
 
 #include <mrpt/img/CImage.h>
+#include <mrpt/viz/CSetOfLines.h>
 #include <mrpt/viz/CSetOfObjects.h>
 #include <mrpt/viz/CSetOfTexturedTriangles.h>
 #include <mrpt/viz/CSetOfTriangles.h>
@@ -44,13 +45,13 @@ namespace mrpt::viz
  * - It loads 3D models using Assimp and converts them to mrpt::viz primitives
  * - Textured meshes become CSetOfTexturedTriangles children
  * - Non-textured meshes become triangle data (VisualObjectParams_Triangles)
- * - Point clouds become point data (VisualObjectParams_Points)
- * - Wireframe elements become line data (VisualObjectParams_Lines)
+ * - Line primitives become line data (VisualObjectParams_Lines)
+ * - Point primitives are ignored
  *
  * The class is a CSetOfObjects container that holds:
  * - One CSetOfTexturedTriangles per texture used in the model
  * - One CSetOfTriangles for all non-textured triangles
- * - Additional child objects for points and lines if present
+ * - One CSetOfLines per material color used by line primitives, if any
  *
  * ![mrpt::viz::CAssimpModel](preview_CAssimpModel.png)
  *
@@ -148,20 +149,19 @@ class CAssimpModel : public CSetOfObjects
   /** @name Rendering Options
    * @{ */
 
-  /** Enable (or disable if set to 0.0f) splitting of textured triangles
-   * into separate renderable objects based on spatial bounding boxes.
-   *
-   * This is required only for semi-transparent objects with overlapping
-   * regions, to ensure correct depth sorting during rendering.
-   *
-   * \param bbox_size Size of the bounding box for splitting (0.0 = disabled)
+  /** \deprecated Does nothing. Textures with transparent parts (alpha
+   * cutout) render correctly without splitting the model, see TAlphaMode.
    */
-  void setSplitTrianglesRenderingBBox(float bbox_size);
-
-  /** Returns the current triangle splitting bbox size (0.0 = disabled) */
-  [[nodiscard]] float getSplitTrianglesRenderingBBox() const
+  [[deprecated("Not needed anymore: it does nothing. See TAlphaMode")]] void
+  setSplitTrianglesRenderingBBox([[maybe_unused]] float bbox_size)
   {
-    return m_splitTrianglesRenderingBBox;
+  }
+
+  /** \deprecated Always returns 0. */
+  [[deprecated("Not needed anymore: it does nothing. See TAlphaMode")]] [[nodiscard]] float
+  getSplitTrianglesRenderingBBox() const
+  {
+    return 0.0f;
   }
 
   /** @} */
@@ -174,6 +174,9 @@ class CAssimpModel : public CSetOfObjects
 
   /** Returns the number of non-textured triangles in the model */
   [[nodiscard]] size_t getNonTexturedTriangleCount() const;
+
+  /** Returns the number of line segments in the model */
+  [[nodiscard]] size_t getLineCount() const;
 
   /** Returns the total vertex count across all meshes */
   [[nodiscard]] size_t getTotalVertexCount() const;
@@ -220,12 +223,13 @@ class CAssimpModel : public CSetOfObjects
   uint32_t m_modelLoadFlags = 0;
   std::string m_modelDirectory;  //!< Directory containing the model file
 
-  // Rendering options
-  float m_splitTrianglesRenderingBBox = 0.0f;
-
   // Loaded content (pointers to child objects for easy access)
   std::vector<CSetOfTexturedTriangles::Ptr> m_texturedMeshes;
+  /** Normal and emissive map files of each of m_texturedMeshes, used while
+   * loading a model to group mesh parts */
+  std::vector<std::string> m_texturedMeshMapFiles;
   CSetOfTriangles::Ptr m_nonTexturedMesh;
+  std::vector<CSetOfLines::Ptr> m_lines;  //!< One per line color
 
   // Texture cache: filepath -> texture info
   struct LoadedTexture
@@ -265,11 +269,16 @@ class CAssimpModel : public CSetOfObjects
   /** Load and cache a texture */
   const LoadedTexture* loadTexture(const std::string& texturePath);
 
-  /** Get or create a CSetOfTexturedTriangles for a texture */
-  CSetOfTexturedTriangles::Ptr getOrCreateTexturedMesh(const std::string& texturePath);
-
-  /** Apply triangle splitting for transparency sorting */
-  void applySplitTrianglesRendering();
+  /** Get or create a CSetOfTexturedTriangles for a texture, alpha mode and
+   * material */
+  CSetOfTexturedTriangles::Ptr getOrCreateTexturedMesh(
+      const std::string& texturePath,
+      TAlphaMode alphaMode,
+      float alphaCutoff,
+      const mrpt::img::TColorf& emissive,
+      float shininess,
+      float specularExponent,
+      const std::string& mapFiles);
 
   /** Update bounding box from mesh data */
   void updateBoundingBox(const mrpt::math::TPoint3Df& point);

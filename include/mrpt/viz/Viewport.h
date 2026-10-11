@@ -13,7 +13,9 @@
 */
 #pragma once
 
+#include <mrpt/containers/NonCopiableData.h>
 #include <mrpt/containers/PerThreadDataHolder.h>
+#include <mrpt/containers/deep_const_iterator.h>
 #include <mrpt/core/safe_pointers.h>
 #include <mrpt/img/CImage.h>
 #include <mrpt/math/TLine3D.h>
@@ -27,6 +29,9 @@
 #include <mrpt/viz/CTexturedPlane.h>
 #include <mrpt/viz/TLightParameters.h>
 #include <mrpt/viz/viz_frwds.h>
+
+#include <memory>
+#include <mutex>
 
 namespace mrpt::img
 {
@@ -261,6 +266,10 @@ class Viewport :
 
   [[nodiscard]] bool isShadowCastingEnabled() const { return m_shadowsEnabled; }
 
+  /** Shadow map size, as set by enableShadowCasting() (default: 2048x2048). */
+  [[nodiscard]] uint32_t getShadowMapSizeX() const { return m_ShadowMapSizeX; }
+  [[nodiscard]] uint32_t getShadowMapSizeY() const { return m_ShadowMapSizeY; }
+
   /** Enable or disable Screen-Space Ambient Occlusion (SSAO).
    *  Parameters are tuned via lightParameters().ssao_* fields.
    *  Default: disabled. */
@@ -272,7 +281,9 @@ class Viewport :
   /** @name Contained objects set/get/search
     @{ */
 
-  using const_iterator = ListVisualObjects::const_iterator;
+  /** Dereferencing it yields a CVisualObject::ConstPtr, so that a `const`
+   * container cannot hand out mutable objects. */
+  using const_iterator = mrpt::containers::deep_const_iterator<ListVisualObjects::const_iterator>;
   using iterator = ListVisualObjects::iterator;
 
   [[nodiscard]] const_iterator begin() const { return m_objects.begin(); }
@@ -296,7 +307,13 @@ class Viewport :
 
   /** Returns the first object with a given name, or nullptr if not found.
    */
-  [[nodiscard]] CVisualObject::Ptr getByName(const std::string& str);
+  [[nodiscard]] CVisualObject::ConstPtr getByName(const std::string& str) const;
+  /// \overload Non-const version returning a mutable Ptr
+  [[nodiscard]] CVisualObject::Ptr getByName(const std::string& str)
+  {
+    return std::const_pointer_cast<CVisualObject>(
+        static_cast<const Viewport*>(this)->getByName(str));
+  }
 
   /** Returns the i'th object of a given class (or of a descendant class), or
   nullptr (an empty smart pointer) if not found.
@@ -356,6 +373,15 @@ class Viewport :
 
   /** Get a reference to the camera associated with this viewport. */
   [[nodiscard]] const mrpt::viz::CCamera& getCamera() const { return m_camera; }
+
+  /** Returns the camera that is actually used to render this viewport: a
+   * `CCamera` object inserted among its contained objects, if any (see
+   * internalResolveActiveCamera()), or getCamera() otherwise.
+   */
+  [[nodiscard]] const mrpt::viz::CCamera& resolveActiveCamera() const
+  {
+    return *internalResolveActiveCamera();
+  }
 
   [[nodiscard]] mrpt::math::TBoundingBox getBoundingBox() const;
 
@@ -479,6 +505,29 @@ class Viewport :
   mutable mrpt::viz::CSetOfLines::Ptr m_borderLines;
 
   const CCamera* internalResolveActiveCamera(const CCamera* forceThisCamera = nullptr) const;
+
+  /** The first CCamera object among the contained ones (searched
+   * recursively), or nullptr. The search result is cached until the structure
+   * of any scene changes. */
+  const CCamera* findCameraObject() const;
+
+  struct CameraObjectCache
+  {
+    CameraObjectCache() = default;
+    CameraObjectCache(const CameraObjectCache&) {}
+    CameraObjectCache& operator=(const CameraObjectCache&)
+    {
+      structureChangeCount = 0;
+      camera.reset();
+      return *this;
+    }
+    ~CameraObjectCache() = default;
+
+    uint64_t structureChangeCount = 0;  //!< 0: not valid
+    std::weak_ptr<const CCamera> camera;
+  };
+  mutable CameraObjectCache m_cameraObjectCache;
+  mutable mrpt::containers::NonCopiableData<std::mutex> m_cameraObjectCacheMtx;
 
   mrpt::viz::ListVisualObjects m_objects;
 
