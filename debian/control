@@ -1,0 +1,12 @@
+Source: ros-rolling-mrpt-apps-gui
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libeigen3-dev, ros-rolling-mrpt-common, ros-rolling-mrpt-graphslam, ros-rolling-mrpt-kinematics, ros-rolling-mrpt-libapps-gui, ros-rolling-mrpt-nav, ros-rolling-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-rolling-mrpt-apps-gui
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-mrpt-common, ros-rolling-mrpt-graphslam, ros-rolling-mrpt-kinematics, ros-rolling-mrpt-libapps-gui, ros-rolling-mrpt-nav, ros-rolling-ros-workspace
+Description: MRPT graphical user interface applications
