@@ -75,16 +75,17 @@ bool TUncertaintyPath<GRAPH_T>::isEmpty() const
 
 template <class GRAPH_T>
 void TUncertaintyPath<GRAPH_T>::assertIsBetweenNodeIDs(
-    const mrpt::graphs::TNodeID& from, const mrpt::graphs::TNodeID& to) const
+    [[maybe_unused]] const mrpt::graphs::TNodeID& from,
+    [[maybe_unused]] const mrpt::graphs::TNodeID& to) const
 {
   ASSERTDEBMSG_(
       this->getSource() == from,
-      format(
+      mrpt::format(
           "\nnodeID %lu is not the source of the path\n%s\n\n", static_cast<unsigned long>(from),
           this->getAsString().c_str()));
   ASSERTDEBMSG_(
       this->getDestination() == to,
-      format(
+      mrpt::format(
           "\nnodeID %lu is not the destination of the path\n%s\n\n", static_cast<unsigned long>(to),
           this->getAsString().c_str()));
 }
@@ -155,7 +156,7 @@ void TUncertaintyPath<GRAPH_T>::addToPath(
 
 template <class GRAPH_T>
 void TUncertaintyPath<GRAPH_T>::loadFromConfigFile(
-    const mrpt::config::CConfigFileBase& source, const std::string& section)
+    const mrpt::config::CConfigFileBase& /*source*/, const std::string& /*section*/)
 {
 }
 
@@ -222,7 +223,7 @@ const mrpt::graphs::TNodeID& TUncertaintyPath<GRAPH_T>::getDestination() const
 }
 
 template <class GRAPH_T>
-double TUncertaintyPath<GRAPH_T>::getDeterminant()
+double TUncertaintyPath<GRAPH_T>::getDeterminant() const
 {
   using namespace mrpt;
   using namespace mrpt::math;
