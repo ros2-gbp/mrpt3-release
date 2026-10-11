@@ -14,8 +14,10 @@
 #pragma once
 
 #include <mrpt/containers/NonCopiableData.h>
+#include <mrpt/img/TCamera.h>
 #include <mrpt/img/TColor.h>
 #include <mrpt/math/TBoundingBox.h>
+#include <mrpt/math/TPose3D.h>
 #include <mrpt/opengl/Buffer.h>
 #include <mrpt/opengl/FrameBuffer.h>
 #include <mrpt/opengl/RenderQueue.h>
@@ -26,8 +28,10 @@
 #include <mrpt/viz/TLightParameters.h>
 #include <mrpt/viz/Viewport.h>
 
+#include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -44,6 +48,10 @@ struct ViewportRenderStats
   size_t numProxiesRendered = 0;
   size_t numProxiesCulled = 0;
   size_t numDrawCalls = 0;
+  size_t numInstancedDrawCalls = 0;  //!< Draw calls that drew several objects at once
+  /** Cube faces of point/spot light shadow maps rendered (not reused from a
+   * previous frame). */
+  size_t numPointShadowFacesRendered = 0;
   double renderTimeMs = 0.0;
 
   void reset()
@@ -51,6 +59,8 @@ struct ViewportRenderStats
     numProxiesRendered = 0;
     numProxiesCulled = 0;
     numDrawCalls = 0;
+    numInstancedDrawCalls = 0;
+    numPointShadowFacesRendered = 0;
     renderTimeMs = 0.0;
   }
 };
@@ -108,6 +118,11 @@ class CompiledViewport
    */
   void updateFromVizViewport(const mrpt::viz::Viewport& vizVp);
 
+  /** Sets the lights of the mrpt::viz::CLight objects in this viewport, in
+   * world coordinates, which are appended to those of the source viewport.
+   * This is called automatically by CompiledScene during compilation. */
+  void setSceneLights(const std::vector<mrpt::viz::TLight>& lights);
+
   /** Returns the viewport name */
   const std::string& getName() const { return m_name; }
 
@@ -116,31 +131,18 @@ class CompiledViewport
   /** @name Proxy Management
    * @{ */
 
-  /** Adds a renderable proxy to this viewport.
+  /** Adds a renderable proxy to this viewport. Its model matrix, visibility,
+   * etc. are kept up to date by the owner (CompiledScene).
    *
    * \param proxy The GPU-side representation of an object
-   * \param sourceObj The original viz object (tracked via weak_ptr)
    */
-  void addProxy(
-      const RenderableProxy::Ptr& proxy,
-      const std::shared_ptr<mrpt::viz::CVisualObject>& sourceObj);
-
-  /** Removes proxies whose source objects have been deleted.
-   * \return Number of orphaned proxies removed
-   */
-  size_t cleanupOrphanedProxies();
-
-  /** Updates all proxies for a given source object (buffers + model matrix).
-   * Called by CompiledScene::updateDirtyObjects().
-   */
-  void updateProxiesForObject(
-      const std::weak_ptr<mrpt::viz::CVisualObject>& weakObj,
-      const mrpt::viz::CVisualObject* sourceObj,
-      const mrpt::math::CMatrixFloat44& modelMatrix,
-      bool effectiveVisible = true);
+  void addProxy(const RenderableProxy::Ptr& proxy);
 
   /** Removes a proxy from this viewport */
   void removeProxy(const RenderableProxy::Ptr& proxy);
+
+  /** Removes a set of proxies from this viewport, in one pass. */
+  void removeProxies(const std::vector<const RenderableProxy*>& proxies);
 
   /** Removes all proxies */
   void clearProxies();
@@ -188,20 +190,6 @@ class CompiledViewport
   /** @name State Updates
    * @{ */
 
-  /** Checks if viewport configuration has changed and updates if needed.
-   *
-   * This monitors changes in:
-   * - Camera position/orientation
-   * - Lighting parameters
-   * - Viewport dimensions
-   *
-   * \return true if any updates were performed
-   */
-  bool updateIfNeeded();
-
-  /** Returns true if there are pending configuration changes */
-  bool hasPendingUpdates() const;
-
   /** Forces regeneration of all projection/view matrices */
   void forceMatrixUpdate() { m_matricesNeedUpdate = true; }
 
@@ -232,7 +220,15 @@ class CompiledViewport
    */
   void setCloneMode(const std::string& clonedViewportName, bool cloneCamera = false);
 
-  /** Disables cloning */
+  /** Makes this viewport use the camera of another one, while still rendering
+   * its own objects.
+   * \param viewportName Name of the viewport whose camera is used */
+  void setCloneCameraFrom(const std::string& viewportName);
+
+  /** Stops using the camera of another viewport */
+  void clearCloneCamera();
+
+  /** Disables cloning, of both objects and camera */
   void clearCloneMode();
 
   /** Returns true if this viewport clones objects from another */
@@ -244,6 +240,10 @@ class CompiledViewport
   /** Returns name of cloned viewport, or empty if not cloning */
   const std::string& getClonedViewportName() const { return m_clonedViewportName; }
 
+  /** Returns the name of the viewport whose camera is used, or empty if the
+   * viewport has its own camera */
+  const std::string& getCameraSourceViewportName() const { return m_clonedCameraViewportName; }
+
   /** @} */
 
   /** @name Shadow Mapping
@@ -252,11 +252,11 @@ class CompiledViewport
   /** Enables/disables shadow casting for this viewport.
    *
    * \param enabled Enable shadow rendering
-   * \param shadowMapSizeX Shadow map texture width (default 4096)
-   * \param shadowMapSizeY Shadow map texture height (default 4096)
+   * \param shadowMapSizeX Shadow map texture width (default 2048)
+   * \param shadowMapSizeY Shadow map texture height (default 2048)
    */
   void enableShadows(
-      bool enabled, unsigned int shadowMapSizeX = 4096, unsigned int shadowMapSizeY = 4096);
+      bool enabled, unsigned int shadowMapSizeX = 2048, unsigned int shadowMapSizeY = 2048);
 
   /** Returns true if shadow casting is enabled */
   bool areShadowsEnabled() const { return m_shadowsEnabled; }
@@ -313,7 +313,14 @@ class CompiledViewport
   const ViewportRenderStats& lastRenderStats() const { return m_lastStats; }
 
   /** Flip vertically at projection level (useful for FBO rendering) */
-  void flipVerticalProjection(bool flipEnabled) { m_flipYProjection = flipEnabled; }
+  void flipVerticalProjection(bool flipEnabled)
+  {
+    if (flipEnabled != m_flipYProjection)
+    {
+      m_flipYProjection = flipEnabled;
+      m_matricesNeedUpdate = true;
+    }
+  }
 
   /** Flip vertically at projection level (useful for FBO rendering) */
   [[nodiscard]] bool flipVerticalProjection() const { return m_flipYProjection; }
@@ -324,25 +331,9 @@ class CompiledViewport
   /** Viewport name (matches viz::Viewport) */
   std::string m_name;
 
-  /** All renderable proxies in this viewport, organized by shader type.
-   * This allows efficient batching: all objects using the same shader
-   * are rendered together to minimize state changes.
-   */
-  std::map<shader_id_t, std::vector<RenderableProxy::Ptr>> m_proxiesByShader;
-
-  /** All proxies in insertion order (for debug/iteration) */
+  /** All proxies, in insertion order. The render queue sorts them for each
+   * pass. */
   std::vector<RenderableProxy::Ptr> m_proxies;
-
-  /** Mapping from source objects to their proxies (using weak_ptr for safety).
-   * This allows detection of deleted source objects for cleanup.
-   * Each object may have multiple proxies (one per tree occurrence when
-   * the same CVisualObject appears at multiple positions in the scene DAG).
-   */
-  std::map<
-      std::weak_ptr<mrpt::viz::CVisualObject>,
-      std::vector<RenderableProxy::Ptr>,
-      std::owner_less<std::weak_ptr<mrpt::viz::CVisualObject>>>
-      m_objectToProxy;
 
   /** @name Viewport Configuration
    * @{ */
@@ -377,6 +368,10 @@ class CompiledViewport
   Buffer m_borderColorBuffer{Buffer::Type::Vertex};
 
   /** Text overlay rendering */
+  /** Model matrices of the objects drawn with instancing in a render pass */
+  Buffer m_instanceBuffer{Buffer::Type::Vertex};
+  std::vector<float> m_instanceMatrices;
+
   VertexArrayObject m_textVAO;
   Buffer m_textVertexBuffer{Buffer::Type::Vertex};
   Buffer m_textColorBuffer{Buffer::Type::Vertex};
@@ -395,42 +390,38 @@ class CompiledViewport
   /** @name Camera and Lighting
    * @{ */
 
-  /** Current camera configuration */
-  mrpt::viz::CCamera m_camera;
-
-  /** Cached camera state (for detecting changes) */
-  struct CameraState
+  /** Current camera configuration. A copy of the parameters only: copying
+   * a CCamera object would count as a change in the scene. */
+  struct CameraParams
   {
-    mrpt::math::TPose3D pose;
-    double zoomDistance = 1.0;
-    double azimuth = 0.0;
-    double elevation = 0.0;
-    double FOV = 60.0;
+    bool noProjection = false;
+    bool projective = true;
     bool is6DOF = false;
-
-    bool operator!=(const CameraState& other) const;
+    float fovDeg = 30.0f;
+    float zoomDistance = 10.0f;
+    float azimuthDeg = 0;
+    float elevationDeg = 0;
+    mrpt::math::TPoint3D pointingAt{0, 0, 0};
+    mrpt::math::TPose3D pose;
+    std::optional<mrpt::img::TCamera> pinhole;
   };
-  CameraState m_lastCameraState;
+  CameraParams m_camera;
 
-  /** Lighting parameters */
+  void updateCameraParams(const mrpt::viz::CCamera& camera);
+
+  /** Lighting parameters, with the lights actually used for rendering: those
+   * of the source viewport and of the scene, selected with selectLights(). */
   mrpt::viz::TLightParameters m_lightParams;
 
-  /** Cached lighting state (for detecting changes that affect rendering).
-   * Light uniforms are uploaded every frame from m_lightParams, so this
-   * only needs to detect changes that require matrix recomputation
-   * (shadow map P/V depends on primary directional direction) or
-   * that should trigger a repaint. */
-  struct LightState
-  {
-    float ambient = 0;
-    size_t numLights = 0;
-    mrpt::math::TVector3Df primaryDirection{0, 0, -1};
-    /** Coarse hash of all light parameters to detect any change */
-    size_t paramsHash = 0;
+  /** All lights of the source viewport */
+  std::vector<mrpt::viz::TLight> m_viewportLights;
 
-    bool operator!=(const LightState& other) const;
-  };
-  LightState m_lastLightState;
+  /** Lights of the CLight objects in the scene, in world coordinates */
+  std::vector<mrpt::viz::TLight> m_sceneLights;
+
+  /** Fills m_lightParams.lights with up to MAX_LIGHTS lights: all directional
+   * lights, then the point/spot lights closest to the camera. */
+  void selectLights();
 
   /** Render matrices (projection, view, model, etc.) */
   TRenderMatrices m_renderMatrices;
@@ -450,6 +441,7 @@ class CompiledViewport
   bool m_isCloned = false;
   bool m_isClonedCamera = false;
   std::string m_clonedViewportName;
+  std::string m_clonedCameraViewportName;
 
   /** @} */
 
@@ -460,8 +452,8 @@ class CompiledViewport
   bool m_shadowsEnabled = false;
 
   /** Shadow map dimensions */
-  unsigned int m_shadowMapSizeX = 4096;
-  unsigned int m_shadowMapSizeY = 4096;
+  unsigned int m_shadowMapSizeX = 2048;
+  unsigned int m_shadowMapSizeY = 2048;
 
   /** Shadow map FBO used to render directly into texture array layers */
   unsigned int m_shadowMapFBO = 0;
@@ -470,6 +462,30 @@ class CompiledViewport
    *  Created/resized on demand in renderShadowMap(). */
   unsigned int m_cascadeDepthArrayTexId = 0;
   int m_cascadeDepthArrayLayers = 0;
+  unsigned int m_cascadeDepthArraySizeX = 0;
+  unsigned int m_cascadeDepthArraySizeY = 0;
+
+  /** GL_TEXTURE_2D_ARRAY holding the cube shadow maps of point/spot lights
+   *  (six layers per light). Created/resized on demand in
+   *  renderPointShadowMaps(). */
+  unsigned int m_pointShadowArrayTexId = 0;
+  int m_pointShadowArrayLayers = 0;
+  unsigned int m_pointShadowArraySize = 0;
+
+  /** A cube shadow map in m_pointShadowArrayTexId */
+  struct PointShadowCube
+  {
+    int lightIndex = -1;  //!< Index in m_lightParams.lights
+    float zNear = 0;
+    float zFar = 0;
+    /** Of the light and the objects in each face frustum, to reuse faces */
+    std::array<uint64_t, 6> faceSignatures{};
+  };
+  std::vector<PointShadowCube> m_pointShadowCubes;
+
+  /** True while rendering point light shadow maps (culling against all the
+   *  cube face frustum planes) */
+  bool m_pointShadowPass = false;
 
   /** @} */
 
@@ -511,7 +527,9 @@ class CompiledViewport
   /** Create/recreate SSAO FBOs for the current viewport size */
   void ssaoCreateFBOs(int w, int h);
 
-  /** Destroy all SSAO GPU resources */
+  /** Deletes the G-buffer and AO framebuffers, keeping the kernel and noise */
+  void ssaoDestroyFramebuffers();
+  /** Deletes everything created by ssaoInit() and ssaoCreateFBOs() */
   void ssaoDestroy();
 
   /** Render SSAO geometry pre-pass into G-buffer */
@@ -542,8 +560,25 @@ class CompiledViewport
   /** Updates projection and view matrices from camera */
   void updateMatrices();
 
-  /** Performs shadow map rendering (1st pass) */
-  void renderShadowMap(ShaderProgramManager& shaderManager);
+  /** Performs shadow map rendering (1st pass).
+   * \param proxiesToRender If non-null, use these proxies instead of m_proxies
+   *        (used for cloned viewports). */
+  void renderShadowMap(
+      ShaderProgramManager& shaderManager,
+      const std::vector<RenderableProxy::Ptr>* proxiesToRender = nullptr);
+
+  /** Frees the GPU resources of all shadow maps */
+  void releaseShadowMaps();
+
+  /** Frees the GPU resources of the point/spot light cube shadow maps */
+  void releasePointShadowMaps();
+
+  /** Renders (or reuses the faces where nothing changed) the cube shadow maps of the
+   * point/spot lights with TLight::cast_shadows.
+   * \param proxiesToRender As in renderShadowMap() */
+  void renderPointShadowMaps(
+      ShaderProgramManager& shaderManager,
+      const std::vector<RenderableProxy::Ptr>* proxiesToRender = nullptr);
 
   /** Performs normal scene rendering.
    * \param proxiesToRender If non-null, use these proxies instead of m_proxies
@@ -574,6 +609,10 @@ class CompiledViewport
   /** Builds render queue for the SSAO geometry pre-pass (triangle proxies only,
    *  all overridden to the SSAO_GEOMETRY shader). */
   void buildRenderQueueSSAOGeom(RenderQueue& queue, const TRenderMatrices& matrices);
+
+  /** Binds a shader and uploads the uniforms that are common to all objects
+   * drawn with it in this pass. */
+  void setupShaderForPass(Program& shader, shader_id_t shaderID, const TRenderMatrices& matrices);
 
   /** Processes render queue (binds shaders, renders objects) */
   void processRenderQueue(
