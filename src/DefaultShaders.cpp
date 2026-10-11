@@ -28,9 +28,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
 
   // Clear any pending OpenGL errors from previous operations
-  while (glGetError() != GL_NO_ERROR)
-  {
-  }
+  clearOpenGLErrors();
 
   // Vertex shader:
   const char* vertex_shader = nullptr;
@@ -79,16 +77,38 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
       fragment_shader =
 #include "../shaders/triangles-light.f.glsl"
           ;
-      uniforms = {"p_matrix",         "v_matrix",          "m_matrix",
-                  "num_lights",       "light_type",        "light_color",
-                  "light_diffuse",    "light_specular",    "light_direction",
-                  "light_position",   "light_attenuation", "light_spot_cutoff",
-                  "light_ambient",    "ambient_sky_color", "ambient_ground_color",
-                  "cam_position",     "materialSpecular",  "materialSpecularExponent",
-                  "materialEmissive", "fog_enabled",       "fog_color",
-                  "fog_near",         "fog_far",           "fog_mode",
-                  "fog_density",      "ssao_enabled",      "ssaoTexture",
-                  "ssao_power",       "ssao_ambient_floor"};
+      uniforms = {
+          "p_matrix",
+          "v_matrix",
+          "m_matrix",
+          "normal_matrix",
+          "num_lights",
+          "light_type",
+          "light_color",
+          "light_diffuse",
+          "light_specular",
+          "light_direction",
+          "light_position",
+          "light_attenuation",
+          "light_range",
+          "light_spot_cutoff",
+          "light_ambient",
+          "ambient_sky_color",
+          "ambient_ground_color",
+          "cam_position",
+          "materialSpecular",
+          "materialSpecularExponent",
+          "materialEmissive",
+          "fog_enabled",
+          "fog_color",
+          "fog_near",
+          "fog_far",
+          "fog_mode",
+          "fog_density",
+          "ssao_enabled",
+          "ssaoTexture",
+          "ssao_power",
+          "ssao_ambient_floor"};
       attribs = {"position", "vertexColor", "vertexNormal"};
       break;
 
@@ -114,6 +134,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "p_matrix",
           "v_matrix",
           "m_matrix",
+          "normal_matrix",
           "num_lights",
           "light_type",
           "light_color",
@@ -122,12 +143,16 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "light_direction",
           "light_position",
           "light_attenuation",
+          "light_range",
           "light_spot_cutoff",
           "light_ambient",
           "ambient_sky_color",
           "ambient_ground_color",
           "cam_position",
           "textureSampler",
+          "alphaCutoff",
+          "normalMapSampler",
+          "emissiveMapSampler",
           "materialSpecular",
           "materialSpecularExponent",
           "materialEmissive",
@@ -141,7 +166,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "ssaoTexture",
           "ssao_power",
           "ssao_ambient_floor"};
-      attribs = {"position", "vertexColor", "vertexUV", "vertexNormal"};
+      attribs = {"position", "vertexColor", "vertexUV", "vertexNormal", "vertexTangent"};
       break;
 
     case DefaultShaderID::TEXTURED_TRIANGLES_NO_LIGHT:
@@ -151,7 +176,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
       fragment_shader =
 #include "../shaders/textured-triangles-no-light.f.glsl"
           ;
-      uniforms = {"pmv_matrix", "textureSampler"};
+      uniforms = {"pmv_matrix", "textureSampler", "alphaCutoff"};
       attribs = {"position", "vertexColor", "vertexUV"};
       break;
 
@@ -194,9 +219,13 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "p_matrix",
           "v_matrix",
           "m_matrix",
+          "normal_matrix",
           "shadowMapArray",
           "num_shadow_cascades",
           "cascade_light_pv",
+          "pointShadowMapArray",
+          "light_shadow_index",
+          "point_shadow_near_far",
           "cascade_light_pv[0]",
           "cascade_light_pv[1]",
           "cascade_light_pv[2]",
@@ -210,6 +239,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "light_direction",
           "light_position",
           "light_attenuation",
+          "light_range",
           "light_spot_cutoff",
           "light_ambient",
           "ambient_sky_color",
@@ -237,13 +267,13 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
       // 1st stage is the same for textured and non-textured triangles:
     case DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_1ST:
       vertex_shader =
-#include "../shaders/triangles-shadow-1st.v.glsl"
+#include "../shaders/textured-triangles-shadow-1st.v.glsl"
           ;
       fragment_shader =
-#include "../shaders/triangles-shadow-1st.f.glsl"
+#include "../shaders/textured-triangles-shadow-1st.f.glsl"
           ;
-      uniforms = {"m_matrix", "light_pv_matrix"};
-      attribs = {"position"};
+      uniforms = {"m_matrix", "light_pv_matrix", "textureSampler", "alphaCutoff"};
+      attribs = {"position", "vertexUV"};
       break;
 
     case DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_2ND:
@@ -260,9 +290,13 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "p_matrix",
           "v_matrix",
           "m_matrix",
+          "normal_matrix",
           "shadowMapArray",
           "num_shadow_cascades",
           "cascade_light_pv",
+          "pointShadowMapArray",
+          "light_shadow_index",
+          "point_shadow_near_far",
           "cascade_light_pv[0]",
           "cascade_light_pv[1]",
           "cascade_light_pv[2]",
@@ -276,6 +310,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "light_direction",
           "light_position",
           "light_attenuation",
+          "light_range",
           "light_spot_cutoff",
           "light_ambient",
           "ambient_sky_color",
@@ -288,7 +323,9 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "materialSpecularExponent",
           "materialEmissive",
           "textureSampler",
+          "alphaCutoff",
           "normalMapSampler",
+          "emissiveMapSampler",
           "fog_enabled",
           "fog_color",
           "fog_near",
@@ -299,7 +336,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
           "ssaoTexture",
           "ssao_power",
           "ssao_ambient_floor"};
-      attribs = {"position", "vertexNormal", "vertexUV", "vertexTangent"};
+      attribs = {"position", "vertexColor", "vertexNormal", "vertexUV", "vertexTangent"};
       break;
 
     // ===========================================
@@ -337,7 +374,7 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
       fragment_shader =
 #include "../shaders/ssao-geometry.f.glsl"
           ;
-      uniforms = {"p_matrix", "v_matrix", "m_matrix"};
+      uniforms = {"p_matrix", "v_matrix", "m_matrix", "normal_matrix"};
       attribs = {"position", "vertexNormal"};
       break;
 
@@ -361,6 +398,17 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
 #include "../shaders/ssao-blur.f.glsl"
           ;
       uniforms = {"ssaoInput"};
+      attribs = {};
+      break;
+
+    case DefaultShaderID::FBO_RGB_POSTPROCESS:
+      vertex_shader =
+#include "../shaders/fbo-rgb-postprocess.v.glsl"
+          ;
+      fragment_shader =
+#include "../shaders/fbo-rgb-postprocess.f.glsl"
+          ;
+      uniforms = {"sceneTex", "lutTex", "useLUT", "noiseStd", "noiseSeed", "frameIndex"};
       attribs = {};
       break;
 
@@ -441,5 +489,17 @@ Program::Ptr mrpt::opengl::LoadDefaultShader(const shader_id_t id)
   return shader;
 #else
   THROW_EXCEPTION("MRPT built without OpenGL support.");
+#endif
+}
+
+void mrpt::opengl::setIdentityInstanceMatrix()
+{
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  for (int col = 0; col < 4; col++)
+  {
+    glVertexAttrib4f(
+        static_cast<GLuint>(INSTANCE_MATRIX_ATTRIB_LOCATION + col), col == 0 ? 1.0f : 0.0f,
+        col == 1 ? 1.0f : 0.0f, col == 2 ? 1.0f : 0.0f, col == 3 ? 1.0f : 0.0f);
+  }
 #endif
 }

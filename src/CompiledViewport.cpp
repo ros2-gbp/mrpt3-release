@@ -12,6 +12,7 @@
  SPDX-License-Identifier: BSD-3-Clause
 */
 
+#include <mrpt/core/bits_math.h>
 #include <mrpt/core/exceptions.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/opengl/CompiledViewport.h>
@@ -25,11 +26,15 @@
 
 #include <Eigen/Dense>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <random>
+#include <unordered_set>
 
 #include "gltext.h"
 
@@ -38,6 +43,250 @@ using namespace mrpt::viz;
 using namespace mrpt::math;
 
 static const bool VIEWPORT_VERBOSE = mrpt::get_env<bool>("MRPT_VIEWPORT_VERBOSE", false);
+
+namespace
+{
+const bool NO_INSTANCING = mrpt::get_env<bool>("MRPT_OPENGL_NO_INSTANCING", false);
+
+/** Whether the rotation/scale part of a model matrix is a rotation times a
+ * uniform scale, the only transformations that instanced draws support (their
+ * normals are transformed by that same matrix, not its inverse transpose). */
+bool isSimilarityTransform(const CMatrixFloat44& M)
+{
+  const auto dot = [&M](int i, int j)
+  { return M(0, i) * M(0, j) + M(1, i) * M(1, j) + M(2, i) * M(2, j); };
+  const float s2 = dot(0, 0);
+  const float tol = 1e-4f * s2;
+  return s2 > 0 && std::abs(dot(1, 1) - s2) <= tol && std::abs(dot(2, 2) - s2) <= tol &&
+         std::abs(dot(0, 1)) <= tol && std::abs(dot(0, 2)) <= tol && std::abs(dot(1, 2)) <= tol &&
+         M(3, 0) == 0 && M(3, 1) == 0 && M(3, 2) == 0 && M(3, 3) == 1;
+}
+
+// Cube shadow map faces (+X,-X,+Y,-Y,+Z,-Z): view direction and "up" vector.
+// The face "right" vector is forward x up. The shadow 2nd pass shaders
+// (shadow-calculation.f.glsl) must use the same convention.
+const std::array<TVector3Df, 6> CUBE_FACE_FORWARD = {
+    TVector3Df{ 1,  0,  0},
+    TVector3Df{-1,  0,  0},
+    TVector3Df{ 0,  1,  0},
+    TVector3Df{ 0, -1,  0},
+    TVector3Df{ 0,  0,  1},
+    TVector3Df{ 0,  0, -1}
+};
+const std::array<TVector3Df, 6> CUBE_FACE_UP = {
+    TVector3Df{0, 0, 1},
+    TVector3Df{0, 0, 1},
+    TVector3Df{0, 0, 1},
+    TVector3Df{0, 0, 1},
+    TVector3Df{0, 1, 0},
+    TVector3Df{0, 1, 0}
+};
+
+/** Projection * view matrix of a cube shadow map face (90 deg FOV). */
+CMatrixFloat44 cubeFacePV(const TPoint3Df& pos, int face, float zNear, float zFar)
+{
+  const auto& F = CUBE_FACE_FORWARD[face];
+  const auto& U = CUBE_FACE_UP[face];
+  const TVector3Df R(F.y * U.z - F.z * U.y, F.z * U.x - F.x * U.z, F.x * U.y - F.y * U.x);
+
+  CMatrixFloat44 V = CMatrixFloat44::Identity();
+  const std::array<TVector3Df, 3> rows = {R, U, TVector3Df(-F.x, -F.y, -F.z)};
+  for (int r = 0; r < 3; r++)
+  {
+    V(r, 0) = rows[r].x;
+    V(r, 1) = rows[r].y;
+    V(r, 2) = rows[r].z;
+    V(r, 3) = -(rows[r].x * pos.x + rows[r].y * pos.y + rows[r].z * pos.z);
+  }
+
+  CMatrixFloat44 P;
+  P.setZero();
+  P(0, 0) = 1;
+  P(1, 1) = 1;
+  P(2, 2) = -(zFar + zNear) / (zFar - zNear);
+  P(2, 3) = -2 * zFar * zNear / (zFar - zNear);
+  P(3, 2) = -1;
+
+  CMatrixFloat44 PV;
+  PV.asEigen() = P.asEigen() * V.asEigen();
+  return PV;
+}
+
+/** Distance beyond which a point/spot light has no visible effect: its range,
+ * or where its attenuation drops below 1/256. Empty if its reach is unlimited
+ * (no range and no distance attenuation). */
+std::optional<float> lightReach(const TLight& l)
+{
+  if (l.range > 0)
+  {
+    return l.range;
+  }
+  const float c = l.attenuation_constant;
+  const float lin = l.attenuation_linear;
+  const float q = l.attenuation_quadratic;
+  constexpr float invMinIntensity = 256.0f;
+  if (q > 0)
+  {
+    return std::max(0.1f, (-lin + std::sqrt(lin * lin - 4 * q * (c - invMinIntensity))) / (2 * q));
+  }
+  if (lin > 0)
+  {
+    return std::max(0.1f, (invMinIntensity - c) / lin);
+  }
+  return std::nullopt;
+}
+
+struct BoundingSphere
+{
+  TPoint3Df center;
+  float radius = 0;
+};
+
+/** A conservative bounding sphere of a proxy geometry in world coordinates,
+ * or empty if its bounding box is unknown. */
+std::optional<BoundingSphere> worldBoundingSphere(const RenderableProxy& p)
+{
+  const auto& bb = p.localBoundingBox();
+  if (!bb.has_value())
+  {
+    return std::nullopt;
+  }
+  const auto& M = p.m_modelMatrix;
+  const TPoint3Df c(
+      0.5f * (bb->min.x + bb->max.x), 0.5f * (bb->min.y + bb->max.y),
+      0.5f * (bb->min.z + bb->max.z));
+  const float r =
+      0.5f * std::hypot(bb->max.x - bb->min.x, bb->max.y - bb->min.y, bb->max.z - bb->min.z);
+  // The Frobenius norm of the rotation/scale/shear part bounds how much it
+  // can stretch any vector:
+  float scale2 = 0;
+  for (int row = 0; row < 3; row++)
+  {
+    for (int col = 0; col < 3; col++)
+    {
+      scale2 += M(row, col) * M(row, col);
+    }
+  }
+  BoundingSphere s;
+  s.center = TPoint3Df(
+      M(0, 0) * c.x + M(0, 1) * c.y + M(0, 2) * c.z + M(0, 3),
+      M(1, 0) * c.x + M(1, 1) * c.y + M(1, 2) * c.z + M(1, 3),
+      M(2, 0) * c.x + M(2, 1) * c.y + M(2, 2) * c.z + M(2, 3));
+  s.radius = r * std::sqrt(scale2);
+  return s;
+}
+
+float distance(const TPoint3Df& a, const TPoint3Df& b)
+{
+  return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+/** Distance from a point to the farthest visible shadow caster, to bound the
+ * cube shadow maps of lights with unlimited reach. */
+float farthestShadowCaster(const TPoint3Df& pos, const std::vector<RenderableProxy::Ptr>& proxies)
+{
+  float d = 1.0f;
+  for (const auto& p : proxies)
+  {
+    if (!p || !p->m_visible || !p->castsShadows())
+    {
+      continue;
+    }
+    if (const auto s = worldBoundingSphere(*p); s.has_value())
+    {
+      d = std::max(d, distance(s->center, pos) + s->radius);
+    }
+  }
+  return d;
+}
+
+/** Whether a spot light cone may reach into a cube face frustum. */
+bool spotReachesCubeFace(const TLight& l, int face)
+{
+  // Angle from a cube face axis to its frustum corners: atan(sqrt(2))
+  constexpr double faceHalfAngleToCorner = 0.9553166181245093;
+  const auto& F = CUBE_FACE_FORWARD[face];
+  const double cosAng = std::clamp<double>(
+      (F.x * l.direction.x + F.y * l.direction.y + F.z * l.direction.z) / l.direction.norm(), -1.0,
+      1.0);
+  return std::acos(cosAng) < faceHalfAngleToCorner + mrpt::DEG2RAD(l.spot_outer_cutoff_deg);
+}
+
+void hashCombine(uint64_t& h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); }
+
+void hashCombine(uint64_t& h, float v)
+{
+  uint32_t bits = 0;
+  std::memcpy(&bits, &v, sizeof(bits));
+  hashCombine(h, static_cast<uint64_t>(bits));
+}
+
+/** Whether a sphere may overlap the frustum of a cube shadow map face (a 90
+ * deg pyramid from the light position, without near/far limits). */
+bool sphereInCubeFace(const TPoint3Df& lightPos, const BoundingSphere& s, int face)
+{
+  const std::array<float, 3> v = {
+      s.center.x - lightPos.x, s.center.y - lightPos.y, s.center.z - lightPos.z};
+  const int axis = face / 2;
+  const float along = (face % 2 == 0) ? v[axis] : -v[axis];
+  // Distance to each side plane, scaled by sqrt(2):
+  constexpr float SQRT2 = 1.41421356f;
+  const float margin = along + s.radius * SQRT2;
+  for (int i = 0; i < 3; i++)
+  {
+    if (i != axis && std::abs(v[i]) > margin)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Identifies what each face of a point light cube shadow map depends on:
+ * the light and the state of the shadow casters within that face frustum. */
+std::array<uint64_t, 6> pointShadowFaceSignatures(
+    const TLight& l,
+    float zNear,
+    float zFar,
+    unsigned int mapSize,
+    const std::vector<RenderableProxy::Ptr>& proxies)
+{
+  uint64_t base = mapSize;
+  for (const float v :
+       {l.position.x, l.position.y, l.position.z, l.direction.x, l.direction.y, l.direction.z,
+        l.spot_outer_cutoff_deg, zNear, zFar})
+  {
+    hashCombine(base, v);
+  }
+  hashCombine(base, static_cast<uint64_t>(l.type));
+
+  std::array<uint64_t, 6> h;
+  h.fill(base);
+
+  for (const auto& p : proxies)
+  {
+    if (!p || !p->m_visible || !p->castsShadows())
+    {
+      continue;
+    }
+    const auto bs = worldBoundingSphere(*p);
+    if (bs.has_value() && distance(bs->center, l.position) > zFar + bs->radius)
+    {
+      continue;
+    }
+    for (int face = 0; face < 6; face++)
+    {
+      if (bs.has_value() && !sphereInCubeFace(l.position, *bs, face))
+      {
+        continue;
+      }
+      hashCombine(h[face], static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p.get())));
+      hashCombine(h[face], p->m_changeCount);
+    }
+  }
+  return h;
+}
+}  // namespace
 
 // ========== CompiledViewport ==========
 
@@ -55,6 +304,7 @@ CompiledViewport::~CompiledViewport()
 
   clearProxies();
   ssaoDestroy();
+  releaseShadowMaps();
 }
 
 void CompiledViewport::updateFromVizViewport(const mrpt::viz::Viewport& vizVp)
@@ -69,12 +319,15 @@ void CompiledViewport::updateFromVizViewport(const mrpt::viz::Viewport& vizVp)
   // Copy viewport bounds
   vizVp.getViewportPosition(m_viewX, m_viewY, m_viewWidth, m_viewHeight);
 
-  // Copy camera
-  m_camera = vizVp.getCamera();
+  // Copy camera (an explicit CCamera object inserted into the viewport, if
+  // any, takes precedence over the viewport's own default camera):
+  updateCameraParams(vizVp.resolveActiveCamera());
   m_matricesNeedUpdate = true;
 
   // Copy lighting
   m_lightParams = vizVp.lightParameters();
+  m_viewportLights = m_lightParams.lights;
+  selectLights();
 
   // Copy rendering options
   m_enablePolygonSmooth = vizVp.isPolygonNicestEnabled();
@@ -92,6 +345,8 @@ void CompiledViewport::updateFromVizViewport(const mrpt::viz::Viewport& vizVp)
 
   // Copy shadow settings
   m_shadowsEnabled = vizVp.isShadowCastingEnabled();
+  m_shadowMapSizeX = vizVp.getShadowMapSizeX();
+  m_shadowMapSizeY = vizVp.getShadowMapSizeY();
 
   // Propagate SSAO enable flag
   m_ssaoEnabled = m_lightParams.ssao_enabled;
@@ -115,8 +370,7 @@ void CompiledViewport::updateFromVizViewport(const mrpt::viz::Viewport& vizVp)
   MRPT_END
 }
 
-void CompiledViewport::addProxy(
-    const RenderableProxy::Ptr& proxy, const std::shared_ptr<mrpt::viz::CVisualObject>& sourceObj)
+void CompiledViewport::addProxy(const RenderableProxy::Ptr& proxy)
 {
   MRPT_START
 
@@ -126,110 +380,7 @@ void CompiledViewport::addProxy(
   }
 
   std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
-
-  // Store in main list
   m_proxies.push_back(proxy);
-
-  // Organize by shader for efficient rendering
-  const auto shaderIDs = proxy->requiredShaders();
-  for (auto shaderID : shaderIDs)
-  {
-    m_proxiesByShader[shaderID].push_back(proxy);
-  }
-
-  // Track object-to-proxy mapping using weak_ptr
-  if (sourceObj)
-  {
-    std::weak_ptr<mrpt::viz::CVisualObject> objWeak = sourceObj;
-    m_objectToProxy[objWeak].push_back(proxy);
-  }
-
-  if (VIEWPORT_VERBOSE)
-  {
-    std::cout << "[CompiledViewport::addProxy] '" << m_name << "' now has " << m_proxies.size()
-              << " proxies\n";
-  }
-
-  MRPT_END
-}
-
-size_t CompiledViewport::cleanupOrphanedProxies()
-{
-  MRPT_START
-
-  std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
-
-  size_t numRemoved = 0;
-
-  // Find proxies whose source objects have been deleted
-  for (auto it = m_objectToProxy.begin(); it != m_objectToProxy.end();)
-  {
-    if (it->first.expired())
-    {
-      // Object was deleted - remove all its proxies (across all occurrences)
-      for (auto& proxy : it->second)
-      {
-        // Remove from main list
-        m_proxies.erase(std::remove(m_proxies.begin(), m_proxies.end(), proxy), m_proxies.end());
-
-        // Remove from shader-organized lists
-        for (auto& [shaderID, proxyList] : m_proxiesByShader)
-        {
-          proxyList.erase(std::remove(proxyList.begin(), proxyList.end(), proxy), proxyList.end());
-        }
-
-        numRemoved++;
-      }
-
-      it = m_objectToProxy.erase(it);
-
-      if (VIEWPORT_VERBOSE)
-      {
-        std::cout << "[CompiledViewport::cleanupOrphanedProxies] '" << m_name
-                  << "' removed orphaned proxies\n";
-      }
-    }
-    else
-    {
-      ++it;
-    }
-  }
-
-  return numRemoved;
-
-  MRPT_END
-}
-
-void CompiledViewport::updateProxiesForObject(
-    const std::weak_ptr<mrpt::viz::CVisualObject>& weakObj,
-    const mrpt::viz::CVisualObject* sourceObj,
-    const mrpt::math::CMatrixFloat44& modelMatrix,
-    bool effectiveVisible)
-{
-  MRPT_START
-
-  // Find all proxies associated with this source object in this viewport
-  // and update them. Note: m_objectToProxy only stores one proxy per obj,
-  // but the proxies list may have multiple for the same source (multi-mixin).
-  // We iterate m_proxies to find all that share the same source.
-  for (auto& proxy : m_proxies)
-  {
-    if (!proxy) continue;
-
-    auto src = proxy->getSourceObject();
-    if (!src) continue;
-
-    // Check if this proxy belongs to the same source object
-    auto srcWeak = std::weak_ptr<mrpt::viz::CVisualObject>(src);
-    if (!(std::owner_less<std::weak_ptr<mrpt::viz::CVisualObject>>{}(srcWeak, weakObj) ||
-          std::owner_less<std::weak_ptr<mrpt::viz::CVisualObject>>{}(weakObj, srcWeak)))
-    {
-      // Same object. Update model matrix, visibility, and buffers
-      proxy->m_modelMatrix = modelMatrix;
-      proxy->m_visible = effectiveVisible;
-      proxy->updateBuffers(sourceObj);
-    }
-  }
 
   MRPT_END
 }
@@ -244,30 +395,28 @@ void CompiledViewport::removeProxy(const RenderableProxy::Ptr& proxy)
   }
 
   std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
-
-  // Remove from main list
   m_proxies.erase(std::remove(m_proxies.begin(), m_proxies.end(), proxy), m_proxies.end());
 
-  // Remove from shader-organized lists
-  for (auto& [shaderID, proxyList] : m_proxiesByShader)
+  MRPT_END
+}
+
+void CompiledViewport::removeProxies(const std::vector<const RenderableProxy*>& proxies)
+{
+  MRPT_START
+
+  if (proxies.empty())
   {
-    proxyList.erase(std::remove(proxyList.begin(), proxyList.end(), proxy), proxyList.end());
+    return;
   }
 
-  // Remove from object mapping
-  for (auto it = m_objectToProxy.begin(); it != m_objectToProxy.end();)
-  {
-    auto& vec = it->second;
-    vec.erase(std::remove(vec.begin(), vec.end(), proxy), vec.end());
-    if (vec.empty())
-    {
-      it = m_objectToProxy.erase(it);
-    }
-    else
-    {
-      ++it;
-    }
-  }
+  const std::unordered_set<const RenderableProxy*> toRemove(proxies.begin(), proxies.end());
+
+  std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
+  m_proxies.erase(
+      std::remove_if(
+          m_proxies.begin(), m_proxies.end(),
+          [&](const RenderableProxy::Ptr& p) { return toRemove.count(p.get()) != 0; }),
+      m_proxies.end());
 
   MRPT_END
 }
@@ -277,10 +426,7 @@ void CompiledViewport::clearProxies()
   MRPT_START
 
   std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
-
   m_proxies.clear();
-  m_proxiesByShader.clear();
-  m_objectToProxy.clear();
 
   MRPT_END
 }
@@ -328,12 +474,37 @@ void CompiledViewport::setCloneMode(const std::string& clonedViewportName, bool 
   m_isCloned = true;
   m_isClonedCamera = cloneCamera;
   m_clonedViewportName = clonedViewportName;
+  m_clonedCameraViewportName = cloneCamera ? clonedViewportName : std::string();
 
   if (VIEWPORT_VERBOSE)
   {
     std::cout << "[CompiledViewport::setCloneMode] '" << m_name << "' cloning from '"
               << clonedViewportName << "'" << (cloneCamera ? " (with camera)" : "") << "\n";
   }
+
+  MRPT_END
+}
+
+void CompiledViewport::setCloneCameraFrom(const std::string& viewportName)
+{
+  MRPT_START
+
+  std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
+
+  m_isClonedCamera = true;
+  m_clonedCameraViewportName = viewportName;
+
+  MRPT_END
+}
+
+void CompiledViewport::clearCloneCamera()
+{
+  MRPT_START
+
+  std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
+
+  m_isClonedCamera = false;
+  m_clonedCameraViewportName.clear();
 
   MRPT_END
 }
@@ -347,6 +518,7 @@ void CompiledViewport::clearCloneMode()
   m_isCloned = false;
   m_isClonedCamera = false;
   m_clonedViewportName.clear();
+  m_clonedCameraViewportName.clear();
 
   MRPT_END
 }
@@ -371,19 +543,7 @@ void CompiledViewport::enableShadows(
 
   if (!enabled)
   {
-#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
-    if (m_shadowMapFBO != 0)
-    {
-      glDeleteFramebuffers(1, &m_shadowMapFBO);
-      m_shadowMapFBO = 0;
-    }
-    if (m_cascadeDepthArrayTexId != 0)
-    {
-      glDeleteTextures(1, &m_cascadeDepthArrayTexId);
-      m_cascadeDepthArrayTexId = 0;
-      m_cascadeDepthArrayLayers = 0;
-    }
-#endif
+    releaseShadowMaps();
   }
 
   if (VIEWPORT_VERBOSE)
@@ -395,16 +555,126 @@ void CompiledViewport::enableShadows(
   MRPT_END
 }
 
+void CompiledViewport::releaseShadowMaps()
+{
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  if (m_shadowMapFBO != 0)
+  {
+    glDeleteFramebuffers(1, &m_shadowMapFBO);
+    m_shadowMapFBO = 0;
+  }
+  if (m_cascadeDepthArrayTexId != 0)
+  {
+    glDeleteTextures(1, &m_cascadeDepthArrayTexId);
+    m_cascadeDepthArrayTexId = 0;
+    m_cascadeDepthArrayLayers = 0;
+  }
+#endif
+  releasePointShadowMaps();
+}
+
+void CompiledViewport::releasePointShadowMaps()
+{
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  if (m_pointShadowArrayTexId != 0)
+  {
+    glDeleteTextures(1, &m_pointShadowArrayTexId);
+    m_pointShadowArrayTexId = 0;
+    m_pointShadowArrayLayers = 0;
+  }
+#endif
+  m_pointShadowCubes.clear();
+}
+
 void CompiledViewport::updateCamera(const mrpt::viz::CCamera& camera)
 {
   MRPT_START
 
   std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
 
-  m_camera = camera;
+  updateCameraParams(camera);
   m_matricesNeedUpdate = true;
+  selectLights();
 
   MRPT_END
+}
+
+void CompiledViewport::setSceneLights(const std::vector<TLight>& lights)
+{
+  std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
+
+  m_sceneLights = lights;
+  selectLights();
+}
+
+void CompiledViewport::selectLights()
+{
+  auto& out = m_lightParams.lights;
+  out = m_viewportLights;
+  out.insert(out.end(), m_sceneLights.begin(), m_sceneLights.end());
+  if (out.size() <= static_cast<size_t>(MAX_LIGHTS))
+  {
+    return;
+  }
+
+  // Too many lights: rank point/spot lights by their distance to the camera
+  // (minus their reach), or to the point an orbit camera looks at:
+  mrpt::math::TPoint3Df camPt;
+  if (m_camera.is6DOF)
+  {
+    camPt = m_camera.pose.translation().cast<float>();
+  }
+  else
+  {
+    camPt = m_camera.pointingAt.cast<float>();
+  }
+
+  std::vector<std::pair<float, size_t>> ranked;
+  ranked.reserve(out.size());
+  for (size_t i = 0; i < out.size(); i++)
+  {
+    const auto& l = out[i];
+    float score = std::numeric_limits<float>::lowest();  // directional: always kept
+    if (l.type != TLightType::Directional)
+    {
+      score = (l.position - camPt).norm() - l.range;
+    }
+    ranked.emplace_back(score, i);
+  }
+  std::stable_sort(
+      ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  ranked.resize(MAX_LIGHTS);
+
+  // Keep the original order of the selected lights:
+  std::vector<size_t> kept;
+  kept.reserve(ranked.size());
+  for (const auto& r : ranked)
+  {
+    kept.push_back(r.second);
+  }
+  std::sort(kept.begin(), kept.end());
+
+  std::vector<TLight> selected;
+  selected.reserve(kept.size());
+  for (const size_t i : kept)
+  {
+    selected.push_back(out[i]);
+  }
+  out = std::move(selected);
+}
+
+void CompiledViewport::updateCameraParams(const mrpt::viz::CCamera& camera)
+{
+  m_camera.noProjection = camera.isNoProjection();
+  m_camera.projective = camera.isProjective();
+  m_camera.is6DOF = camera.is6DOFMode();
+  m_camera.fovDeg = camera.getProjectiveFOVdeg();
+  m_camera.zoomDistance = camera.getZoomDistance();
+  m_camera.azimuthDeg = camera.getAzimuthDegrees();
+  m_camera.elevationDeg = camera.getElevationDegrees();
+  m_camera.pointingAt = camera.getPointingAt().cast<double>();
+  m_camera.pose = camera.getPose();
+  m_camera.pinhole = camera.getPinholeModel();
 }
 
 void CompiledViewport::setViewportBounds(double x, double y, double width, double height)
@@ -467,133 +737,6 @@ void CompiledViewport::setBorder(unsigned int width, const mrpt::img::TColor& co
   MRPT_END
 }
 
-bool CompiledViewport::CameraState::operator!=(const CameraState& other) const
-{
-  return pose != other.pose || zoomDistance != other.zoomDistance || azimuth != other.azimuth ||
-         elevation != other.elevation || FOV != other.FOV || is6DOF != other.is6DOF;
-}
-
-bool CompiledViewport::LightState::operator!=(const LightState& other) const
-{
-  return ambient != other.ambient || numLights != other.numLights ||
-         primaryDirection != other.primaryDirection || paramsHash != other.paramsHash;
-}
-
-bool CompiledViewport::updateIfNeeded()
-{
-  MRPT_START
-
-  bool anyUpdates = false;
-
-  std::unique_lock<std::shared_mutex> lock(m_stateMtx.data);
-
-  // Clean up orphaned proxies first
-  if (cleanupOrphanedProxies() > 0)
-  {
-    anyUpdates = true;
-  }
-
-  // Check camera changes
-  CameraState currentCamera;
-  currentCamera.pose = m_camera.getPose();
-  currentCamera.zoomDistance = m_camera.getZoomDistance();
-  currentCamera.azimuth = m_camera.getAzimuthDegrees();
-  currentCamera.elevation = m_camera.getElevationDegrees();
-  currentCamera.FOV = m_camera.getProjectiveFOVdeg();
-  currentCamera.is6DOF = m_camera.is6DOFMode();
-
-  if (currentCamera != m_lastCameraState)
-  {
-    m_lastCameraState = currentCamera;
-    m_matricesNeedUpdate = true;
-    anyUpdates = true;
-
-    if (VIEWPORT_VERBOSE)
-    {
-      std::cout << "[CompiledViewport::updateIfNeeded] '" << m_name << "' camera changed\n";
-    }
-  }
-
-  // Check lighting changes (detect anything that needs a repaint or
-  // shadow matrix recomputation)
-  LightState currentLight;
-  currentLight.ambient = m_lightParams.ambient;
-  currentLight.numLights = m_lightParams.lights.size();
-  currentLight.primaryDirection = m_lightParams.primaryDirectionalDirection();
-
-  // Coarse hash over all light fields to detect position/color/etc changes
-  {
-    std::size_t h = 0;
-    auto hashCombine = [&](float v)
-    {
-      // Simple float hash via bit reinterpretation
-      uint32_t bits;
-      std::memcpy(&bits, &v, sizeof(bits));
-      h ^= std::hash<uint32_t>{}(bits) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    };
-    for (const auto& l : m_lightParams.lights)
-    {
-      hashCombine(static_cast<float>(l.type));
-      hashCombine(l.color.R);
-      hashCombine(l.color.G);
-      hashCombine(l.color.B);
-      hashCombine(l.diffuse);
-      hashCombine(l.specular);
-      hashCombine(l.direction.x);
-      hashCombine(l.direction.y);
-      hashCombine(l.direction.z);
-      hashCombine(l.position.x);
-      hashCombine(l.position.y);
-      hashCombine(l.position.z);
-      hashCombine(l.attenuation_constant);
-      hashCombine(l.attenuation_linear);
-      hashCombine(l.attenuation_quadratic);
-    }
-    hashCombine(m_lightParams.ambientSkyColor.R);
-    hashCombine(m_lightParams.ambientSkyColor.G);
-    hashCombine(m_lightParams.ambientSkyColor.B);
-    hashCombine(m_lightParams.ambientGroundColor.R);
-    hashCombine(m_lightParams.ambientGroundColor.G);
-    hashCombine(m_lightParams.ambientGroundColor.B);
-    hashCombine(m_lightParams.fog_enabled ? 1.0f : 0.0f);
-    hashCombine(m_lightParams.fog_color.R);
-    hashCombine(m_lightParams.fog_color.G);
-    hashCombine(m_lightParams.fog_color.B);
-    hashCombine(m_lightParams.fog_near);
-    hashCombine(m_lightParams.fog_far);
-    hashCombine(static_cast<float>(m_lightParams.fog_mode));
-    hashCombine(m_lightParams.fog_density);
-    currentLight.paramsHash = h;
-  }
-
-  if (currentLight != m_lastLightState)
-  {
-    // If primary directional direction changed, shadow matrices need recomputation
-    if (currentLight.primaryDirection != m_lastLightState.primaryDirection)
-    {
-      m_matricesNeedUpdate = true;
-    }
-    m_lastLightState = currentLight;
-    anyUpdates = true;
-
-    if (VIEWPORT_VERBOSE)
-    {
-      std::cout << "[CompiledViewport::updateIfNeeded] '" << m_name << "' lighting changed\n";
-    }
-  }
-
-  return anyUpdates;
-
-  MRPT_END
-}
-
-bool CompiledViewport::hasPendingUpdates() const
-{
-  std::shared_lock<std::shared_mutex> lock(m_stateMtx.data);
-
-  return m_matricesNeedUpdate;
-}
-
 void CompiledViewport::computePixelViewport(
     int windowWidth, int windowHeight, int offsetX, int offsetY)
 {
@@ -642,22 +785,19 @@ void CompiledViewport::updateMatrices()
   m_renderMatrices.viewport_width = m_pixelWidth;
   m_renderMatrices.viewport_height = m_pixelHeight;
   // Compute projection matrix based on camera type
-  if (m_camera.isNoProjection())
+  if (m_camera.noProjection)
   {
     m_renderMatrices.computeNoProjectionMatrix(m_clipNear, m_clipFar);
   }
   else
   {
-    m_renderMatrices.is_projective = m_camera.isProjective();
-    m_renderMatrices.FOV = m_camera.getProjectiveFOVdeg();
-    m_renderMatrices.eyeDistance = m_camera.getZoomDistance();
-    if (m_camera.hasPinholeModel())
-      m_renderMatrices.pinhole_model = m_camera.getPinholeModel();
-    else
-      m_renderMatrices.pinhole_model.reset();
-    if (m_camera.is6DOFMode())
+    m_renderMatrices.is_projective = m_camera.projective;
+    m_renderMatrices.FOV = m_camera.fovDeg;
+    m_renderMatrices.eyeDistance = m_camera.zoomDistance;
+    m_renderMatrices.pinhole_model = m_camera.pinhole;
+    if (m_camera.is6DOF)
     {
-      const auto pose = m_camera.getPose();
+      const auto& pose = m_camera.pose;
       m_renderMatrices.eye = pose.translation();
 
       // Compute pointing direction
@@ -672,15 +812,15 @@ void CompiledViewport::updateMatrices()
     else
     {
       // Orbit camera mode
-      m_renderMatrices.pointing = m_camera.getPointingAt();
-      m_renderMatrices.azimuth = DEG2RAD(m_camera.getAzimuthDegrees());
-      m_renderMatrices.elev = DEG2RAD(m_camera.getElevationDegrees());
+      m_renderMatrices.pointing = m_camera.pointingAt;
+      m_renderMatrices.azimuth = DEG2RAD(m_camera.azimuthDeg);
+      m_renderMatrices.elev = DEG2RAD(m_camera.elevationDeg);
 
       const auto c2m_u = mrpt::math::TVector3D(
           cos(m_renderMatrices.azimuth) * cos(m_renderMatrices.elev),
           sin(m_renderMatrices.azimuth) * cos(m_renderMatrices.elev), sin(m_renderMatrices.elev));
 
-      const double dis = std::max<double>(0.001, m_camera.getZoomDistance());
+      const double dis = std::max<double>(0.001, m_camera.zoomDistance);
       m_renderMatrices.eye = m_renderMatrices.pointing + c2m_u * dis;
 
       m_renderMatrices.up.x = -cos(m_renderMatrices.azimuth) * sin(m_renderMatrices.elev);
@@ -699,9 +839,25 @@ void CompiledViewport::updateMatrices()
   if (m_shadowsEnabled)
   {
     const float shadowZmax = std::min(m_lightShadowClipFar, m_clipFar);
+    // Cameras with a free pose have no orbit distance to size shadows with:
+    constexpr float DEFAULT_SHADOW_DISTANCE_6DOF = 40.0f;
+    float shadowDistance = m_lightParams.shadow_max_distance;
+    if (shadowDistance <= 0 && m_camera.is6DOF)
+    {
+      shadowDistance = DEFAULT_SHADOW_DISTANCE_6DOF;
+    }
     m_renderMatrices.computeCascadedLightProjectionMatrices(
         m_lightShadowClipNear, shadowZmax, m_lightParams,
-        std::min(m_shadowMapSizeX, m_shadowMapSizeY));
+        std::min(m_shadowMapSizeX, m_shadowMapSizeY), shadowDistance);
+  }
+  if (m_flipYProjection)
+  {
+    // Negate the Y row of the projection matrix. Done here, on the freshly
+    // computed matrix, so the flip is applied exactly once.
+    for (mrpt::math::matrix_index_t c = 0; c < m_renderMatrices.p_matrix.cols(); c++)
+    {
+      m_renderMatrices.p_matrix(1, c) *= -1.0f;
+    }
   }
   m_renderMatrices.initialized = true;
   m_matricesNeedUpdate = false;
@@ -736,15 +892,12 @@ void CompiledViewport::render(
   // Update matrices if needed
   updateMatrices();
 
+  // Triangle shaders read the instance matrix attribute in all draws:
+  setIdentityInstanceMatrix();
+
   if (m_flipYProjection)
   {
-    // Negate Y row of projection matrix
-    for (mrpt::math::matrix_index_t c = 0; c < m_renderMatrices.p_matrix.cols(); c++)
-    {
-      m_renderMatrices.p_matrix(1, c) *= -1.0f;
-    }
-
-    // Compensate for winding order change
+    // Compensate for the winding order change of the flipped projection
     glFrontFace(GL_CW);
   }
 
@@ -801,7 +954,8 @@ void CompiledViewport::render(
     // Shadow map pass (if enabled)
     if (m_shadowsEnabled)
     {
-      renderShadowMap(shaderManager);
+      renderShadowMap(shaderManager, proxiesToRender);
+      renderPointShadowMaps(shaderManager, proxiesToRender);
     }
     // SSAO pre-pass (if enabled)
     if (m_ssaoEnabled)
@@ -864,7 +1018,8 @@ void CompiledViewport::renderImageView(ShaderProgramManager& shaderManager)
   // (same logic as mrpt v2 Viewport::renderImageView)
   if (auto src = m_imageViewProxy->getSourceObject(); src)
   {
-    if (auto* ttSrc = dynamic_cast<mrpt::viz::VisualObjectParams_TexturedTriangles*>(src.get());
+    if (auto* ttSrc =
+            dynamic_cast<const mrpt::viz::VisualObjectParams_TexturedTriangles*>(src.get());
         ttSrc && ttSrc->textureImageHasBeenAssigned())
     {
       const auto& img = ttSrc->getTextureImage();
@@ -987,7 +1142,12 @@ void CompiledViewport::ssaoInit()
 void CompiledViewport::ssaoCreateFBOs(int w, int h)
 {
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
-  ssaoDestroy();  // delete existing resources
+  // The caller's framebuffer must be current again when returning:
+  const auto callerFBs = FrameBuffer::CurrentBinding();
+
+  // Delete the previous G-buffer and AO buffers only: the kernel, noise
+  // texture and VAO created by ssaoInit() are needed to render.
+  ssaoDestroyFramebuffers();
 
   // --- G-buffer FBO ---
   glGenFramebuffers(1, &m_ssaoGBufferFBO);
@@ -1051,13 +1211,13 @@ void CompiledViewport::ssaoCreateFBOs(int w, int h)
     glDrawBuffers(1, &buf);
   }
 
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  FrameBuffer::Bind(callerFBs);
   m_ssaoLastW = w;
   m_ssaoLastH = h;
 #endif
 }
 
-void CompiledViewport::ssaoDestroy()
+void CompiledViewport::ssaoDestroyFramebuffers()
 {
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
   auto del_tex = [](unsigned int& t)
@@ -1093,16 +1253,28 @@ void CompiledViewport::ssaoDestroy()
   del_tex(m_ssaoRawTex);
   del_fbo(m_ssaoBlurFBO);
   del_tex(m_ssaoBlurTex);
-  del_tex(m_ssaoNoiseTex);
+
+  m_ssaoLastW = 0;
+  m_ssaoLastH = 0;
+#endif
+}
+
+void CompiledViewport::ssaoDestroy()
+{
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  ssaoDestroyFramebuffers();
+
+  if (m_ssaoNoiseTex)
+  {
+    glDeleteTextures(1, &m_ssaoNoiseTex);
+    m_ssaoNoiseTex = 0;
+  }
   if (m_ssaoDummyVAO)
   {
     glDeleteVertexArrays(1, &m_ssaoDummyVAO);
     m_ssaoDummyVAO = 0;
   }
-
   m_ssaoKernel.clear();
-  m_ssaoLastW = 0;
-  m_ssaoLastH = 0;
 #endif
 }
 
@@ -1225,53 +1397,55 @@ void CompiledViewport::buildRenderQueueSSAOGeom(RenderQueue& queue, const TRende
   MRPT_START
   for (const auto& proxy : m_proxies)
   {
-    if (!proxy || !proxy->m_visible) continue;
+    if (!proxy || !proxy->m_visible)
+    {
+      continue;
+    }
 
     // Only render objects that have lit triangle shaders (they have normals)
-    auto shaderIDs = proxy->requiredShaders();
-    bool hasTriangles = false;
-    for (auto sid : shaderIDs)
+    const auto shaderIDs = proxy->requiredShaders();
+    const bool hasTriangles = std::any_of(
+        shaderIDs.begin(), shaderIDs.end(),
+        [](shader_id_t sid)
+        {
+          return sid == DefaultShaderID::TRIANGLES_LIGHT ||
+                 sid == DefaultShaderID::TEXTURED_TRIANGLES_LIGHT ||
+                 sid == DefaultShaderID::TRIANGLES_SHADOW_2ND ||
+                 sid == DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_2ND;
+        });
+    if (!hasTriangles)
     {
-      if (sid == DefaultShaderID::TRIANGLES_LIGHT ||
-          sid == DefaultShaderID::TEXTURED_TRIANGLES_LIGHT ||
-          sid == DefaultShaderID::TRIANGLES_SHADOW_2ND ||
-          sid == DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_2ND)
-      {
-        hasTriangles = true;
-        break;
-      }
+      continue;
     }
-    if (!hasTriangles) continue;
 
-    mrpt::math::CMatrixDouble44 modelMat;
-    modelMat.asEigen() = proxy->m_modelMatrix.asEigen().template cast<double>();
-    const mrpt::poses::CPose3D objPose(modelMat);
+    RenderQueueElement e;
+    e.proxy = proxy.get();
+    e.shader = DefaultShaderID::SSAO_GEOMETRY;
+    e.m_matrix = proxy->m_modelMatrix;
+    e.mv_matrix.asEigen() = matrices.v_matrix.asEigen() * e.m_matrix.asEigen();
+    e.pmv_matrix.asEigen() = matrices.p_matrix.asEigen() * e.mv_matrix.asEigen();
 
-    const auto [objDepth, visible, fullyVisible] =
-        depthAndVisibleInView(proxy.get(), matrices, objPose, false);
-    if (!visible) continue;
-
-    auto objMatrices = matrices;
-    objMatrices.m_matrix = proxy->m_modelMatrix;
-    objMatrices.mv_matrix.asEigen() =
-        objMatrices.v_matrix.asEigen() * objMatrices.m_matrix.asEigen();
-    objMatrices.pmv_matrix.asEigen() =
-        objMatrices.p_matrix.asEigen() * objMatrices.mv_matrix.asEigen();
-
-    queue[DefaultShaderID::SSAO_GEOMETRY].emplace(
-        static_cast<float>(objDepth), RenderQueueElement{proxy.get(), objMatrices});
+    const auto& bb = proxy->localBoundingBox();
+    if (bb && proxy->cullEligible() && !boxIntersectsClipVolume(*bb, e.pmv_matrix))
+    {
+      continue;
+    }
+    queue.opaque.push_back(e);
   }
+  queue.sort();
   MRPT_END
 }
 
-void CompiledViewport::renderShadowMap(ShaderProgramManager& shaderManager)
+void CompiledViewport::renderShadowMap(
+    ShaderProgramManager& shaderManager, const std::vector<RenderableProxy::Ptr>* proxiesToRender)
 {
   MRPT_START
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
   const int numCascades = m_renderMatrices.numShadowCascades;
 
   // Create/resize the cascade depth texture array
-  if (m_cascadeDepthArrayTexId == 0 || m_cascadeDepthArrayLayers != numCascades)
+  if (m_cascadeDepthArrayTexId == 0 || m_cascadeDepthArrayLayers != numCascades ||
+      m_cascadeDepthArraySizeX != m_shadowMapSizeX || m_cascadeDepthArraySizeY != m_shadowMapSizeY)
   {
     if (m_cascadeDepthArrayTexId != 0) glDeleteTextures(1, &m_cascadeDepthArrayTexId);
     glGenTextures(1, &m_cascadeDepthArrayTexId);
@@ -1286,6 +1460,8 @@ void CompiledViewport::renderShadowMap(ShaderProgramManager& shaderManager)
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     m_cascadeDepthArrayLayers = numCascades;
+    m_cascadeDepthArraySizeX = m_shadowMapSizeX;
+    m_cascadeDepthArraySizeY = m_shadowMapSizeY;
   }
 
   // Create a single FBO for rendering directly into texture array layers
@@ -1304,6 +1480,13 @@ void CompiledViewport::renderShadowMap(ShaderProgramManager& shaderManager)
   glEnable(GL_POLYGON_OFFSET_FILL);
   glPolygonOffset(2.0f, 4.0f);
 
+#if defined(GL_DEPTH_CLAMP)
+  // Casters between the light and the cascade near plane must still cast
+  // shadows (e.g. a ceiling high above the floor seen by the camera):
+  // clamp their depth to the near plane instead of clipping them.
+  glEnable(GL_DEPTH_CLAMP);
+#endif
+
   // Render each cascade directly into the texture array layer
   for (int c = 0; c < numCascades; c++)
   {
@@ -1318,10 +1501,13 @@ void CompiledViewport::renderShadowMap(ShaderProgramManager& shaderManager)
     m_renderMatrices.light_pv = m_renderMatrices.cascade_light_pv[c];
     m_renderMatrices.currentCascadeIndex = c;
 
-    renderNormalScene(shaderManager, true);
+    renderNormalScene(shaderManager, true, proxiesToRender);
   }
 
   glDisable(GL_POLYGON_OFFSET_FILL);
+#if defined(GL_DEPTH_CLAMP)
+  glDisable(GL_DEPTH_CLAMP);
+#endif
 
   // Restore previous FBO and viewport
   FrameBuffer::Bind(oldFBs);
@@ -1329,6 +1515,135 @@ void CompiledViewport::renderShadowMap(ShaderProgramManager& shaderManager)
 #endif
   MRPT_END
 }
+void CompiledViewport::renderPointShadowMaps(
+    ShaderProgramManager& shaderManager, const std::vector<RenderableProxy::Ptr>* proxiesToRender)
+{
+  MRPT_START
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  // Lights casting shadows, in the same order used to assign their cube maps
+  // in setupShaderForPass():
+  std::vector<int> lightIndices;
+  const auto& lights = m_lightParams.lights;
+  for (int i = 0; i < static_cast<int>(lights.size()) && i < MAX_LIGHTS &&
+                  static_cast<int>(lightIndices.size()) < MAX_SHADOW_POINT_LIGHTS;
+       i++)
+  {
+    if (lights[i].type != TLightType::Directional && lights[i].cast_shadows)
+    {
+      lightIndices.push_back(i);
+    }
+  }
+  if (lightIndices.empty())
+  {
+    releasePointShadowMaps();
+    return;
+  }
+
+  const unsigned int mapSize = std::max<unsigned int>(16, m_lightParams.point_shadow_map_size);
+  const int numLayers = 6 * static_cast<int>(lightIndices.size());
+
+  // Create/resize the cube maps texture array
+  bool texRecreated = false;
+  if (m_pointShadowArrayTexId == 0 || m_pointShadowArrayLayers != numLayers ||
+      m_pointShadowArraySize != mapSize)
+  {
+    if (m_pointShadowArrayTexId != 0)
+    {
+      glDeleteTextures(1, &m_pointShadowArrayTexId);
+    }
+    glGenTextures(1, &m_pointShadowArrayTexId);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, m_pointShadowArrayTexId);
+    glTexImage3D(
+        GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT24, mapSize, mapSize, numLayers, 0,
+        GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    m_pointShadowArrayLayers = numLayers;
+    m_pointShadowArraySize = mapSize;
+    texRecreated = true;
+  }
+  m_pointShadowCubes.resize(lightIndices.size());
+
+  if (m_shadowMapFBO == 0)
+  {
+    glGenFramebuffers(1, &m_shadowMapFBO);
+  }
+
+  const auto oldFBs = FrameBuffer::CurrentBinding();
+  const auto oldLightPV = m_renderMatrices.light_pv;
+  bool fboBound = false;
+
+  for (size_t k = 0; k < lightIndices.size(); k++)
+  {
+    const auto& l = lights[lightIndices[k]];
+    auto& cube = m_pointShadowCubes[k];
+
+    const auto& proxies = proxiesToRender ? *proxiesToRender : m_proxies;
+    const auto reach = lightReach(l);
+    const float zFar = reach.has_value() ? *reach : farthestShadowCaster(l.position, proxies);
+    const float zNear = std::min(0.05f, zFar * 0.01f);
+    const auto signatures = pointShadowFaceSignatures(l, zNear, zFar, mapSize, proxies);
+
+    // Reuse the faces whose light and nearby objects did not change:
+    const bool reuseFaces = !texRecreated && cube.lightIndex == lightIndices[k];
+    cube.lightIndex = lightIndices[k];
+    cube.zNear = zNear;
+    cube.zFar = zFar;
+
+    for (int face = 0; face < 6; face++)
+    {
+      if (reuseFaces && cube.faceSignatures[face] == signatures[face])
+      {
+        continue;
+      }
+      cube.faceSignatures[face] = signatures[face];
+
+      if (!fboBound)
+      {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_shadowMapFBO);
+        glViewport(0, 0, static_cast<GLsizei>(mapSize), static_cast<GLsizei>(mapSize));
+        glEnable(GL_DEPTH_TEST);
+        // Hardware polygon offset to prevent shadow acne (self-shadowing)
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(2.0f, 4.0f);
+        fboBound = true;
+        m_pointShadowPass = true;
+      }
+
+      glFramebufferTextureLayer(
+          GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_pointShadowArrayTexId, 0,
+          static_cast<GLint>(k * 6 + face));
+      glDrawBuffer(GL_NONE);
+      glReadBuffer(GL_NONE);
+      glClear(GL_DEPTH_BUFFER_BIT);
+
+      if (l.type == TLightType::Spot && !spotReachesCubeFace(l, face))
+      {
+        continue;
+      }
+
+      m_renderMatrices.light_pv = cubeFacePV(l.position, face, zNear, zFar);
+      renderNormalScene(shaderManager, true, proxiesToRender);
+      m_lastStats.numPointShadowFacesRendered++;
+    }
+  }
+
+  m_renderMatrices.light_pv = oldLightPV;
+  if (fboBound)
+  {
+    m_pointShadowPass = false;
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    FrameBuffer::Bind(oldFBs);
+    glViewport(m_pixelX, m_pixelY, m_pixelWidth, m_pixelHeight);
+  }
+#endif
+  MRPT_END
+}
+
 void CompiledViewport::renderNormalScene(
     ShaderProgramManager& shaderManager,
     bool isShadowMapPass,
@@ -1362,6 +1677,7 @@ void CompiledViewport::renderNormalScene(
 #endif
   MRPT_END
 }
+
 void CompiledViewport::buildRenderQueue(
     RenderQueue& queue,
     const TRenderMatrices& matrices,
@@ -1373,14 +1689,9 @@ void CompiledViewport::buildRenderQueue(
   const auto& proxies = proxiesToRender ? *proxiesToRender : m_proxies;
   for (const auto& proxy : proxies)
   {
-    if (!proxy)
-    {
-      continue;
-    }
-
     // Skip invisible objects: check effective visibility (accounts for
-    // parent container visibility propagated by updateDirtyObjectRecursive)
-    if (!proxy->m_visible)
+    // parent container visibility)
+    if (!proxy || !proxy->m_visible)
     {
       continue;
     }
@@ -1391,29 +1702,52 @@ void CompiledViewport::buildRenderQueue(
       continue;
     }
 
-    // Frustum culling and depth computation
-    mrpt::math::CMatrixDouble44 modelMat;
-    modelMat.asEigen() = proxy->m_modelMatrix.asEigen().template cast<double>();
-    const mrpt::poses::CPose3D objPose(modelMat);
+    RenderQueueElement e;
+    e.proxy = proxy.get();
+    e.m_matrix = proxy->m_modelMatrix;
+    e.mv_matrix.asEigen() = matrices.v_matrix.asEigen() * e.m_matrix.asEigen();
 
-    const bool skipCull = isShadowMapPass || !proxy->cullEligible();
-    const auto [objDepth, visible, fullyVisible] =
-        depthAndVisibleInView(proxy.get(), matrices, objPose, skipCull);
-
-    if (!visible)
+    // Frustum culling: against the camera, or against the light frustum of
+    // this shadow cascade. Casters between the light and the cascade near
+    // plane still cast shadows (depth clamp), so that plane is not tested.
+    const auto& bb = proxy->localBoundingBox();
+    const bool checkCulling = bb.has_value() && proxy->cullEligible();
+    if (isShadowMapPass)
     {
-      stats.numProxiesCulled++;
-      continue;
+      if (checkCulling)
+      {
+        mrpt::math::CMatrixFloat44 lightPVM;
+        lightPVM.asEigen() = matrices.light_pv.asEigen() * e.m_matrix.asEigen();
+        constexpr unsigned int NEAR_PLANE = 16;
+        const unsigned int planes = m_pointShadowPass ? 0x3F : (0x3F & ~NEAR_PLANE);
+        if (!boxIntersectsClipVolume(*bb, lightPVM, planes))
+        {
+          stats.numProxiesCulled++;
+          continue;
+        }
+      }
+    }
+    else
+    {
+      e.pmv_matrix.asEigen() = matrices.p_matrix.asEigen() * e.mv_matrix.asEigen();
+      if (checkCulling && !boxIntersectsClipVolume(*bb, e.pmv_matrix))
+      {
+        stats.numProxiesCulled++;
+        continue;
+      }
     }
 
-    auto shaderIDs = proxy->requiredShaders();
+    // Eye-space depth (larger is farther), for sorting:
+    const auto& p = proxy->m_sortPointLocal;
+    const auto& MV = e.mv_matrix;
+    e.depth = -(MV(2, 0) * p.x + MV(2, 1) * p.y + MV(2, 2) * p.z + MV(2, 3));
 
+    auto shaderIDs = proxy->requiredShaders();
     if (isShadowMapPass)
     {
       // Shadow 1st pass: only render depth using the shadow depth shader.
-      // Skip non-triangle proxies (points, lines don't cast shadows).
       shaderIDs.clear();
-      shaderIDs.push_back(DefaultShaderID::TRIANGLES_SHADOW_1ST);
+      shaderIDs.push_back(proxy->shadowMapShader());
     }
     else if (m_shadowsEnabled)
     {
@@ -1422,32 +1756,168 @@ void CompiledViewport::buildRenderQueue(
       for (auto& sid : shaderIDs)
       {
         if (sid == DefaultShaderID::TRIANGLES_LIGHT)
+        {
           sid = DefaultShaderID::TRIANGLES_SHADOW_2ND;
+        }
         else if (sid == DefaultShaderID::TEXTURED_TRIANGLES_LIGHT)
+        {
           sid = DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_2ND;
+        }
       }
     }
 
+    auto& layer = isShadowMapPass          ? queue.opaque
+                  : proxy->isBackground()  ? queue.background
+                  : proxy->isTransparent() ? queue.transparent
+                                           : queue.opaque;
+
+    // Opaque copies of the same geometry can be drawn in one call (transparent
+    // ones must be drawn in back to front order):
+    e.batchKey = 0;
+    if (&layer == &queue.opaque && !NO_INSTANCING && proxy->supportsInstancing() &&
+        isSimilarityTransform(e.m_matrix))
+    {
+      e.batchKey = proxy->geometry()->id();
+    }
     for (auto shaderID : shaderIDs)
     {
-      // Create per-object render state with the object's model matrix
-      auto objMatrices = matrices;
-      objMatrices.m_matrix = proxy->m_modelMatrix;
-
-      // Precompute derived matrices
-      objMatrices.mv_matrix.asEigen() =
-          objMatrices.v_matrix.asEigen() * objMatrices.m_matrix.asEigen();
-      objMatrices.pmv_matrix.asEigen() =
-          objMatrices.p_matrix.asEigen() * objMatrices.mv_matrix.asEigen();
-
-      queue[shaderID].emplace(
-          static_cast<float>(objDepth), RenderQueueElement{proxy.get(), objMatrices});
+      e.shader = shaderID;
+      layer.push_back(e);
     }
 
     stats.numProxiesRendered++;
   }
+  queue.sort();
   MRPT_END
 }
+
+void CompiledViewport::setupShaderForPass(
+    Program& shader, shader_id_t shaderID, const TRenderMatrices& matrices)
+{
+#if MRPT_HAS_OPENGL || MRPT_HAS_EGL
+  shader.use();
+
+  const auto IS_TRANSPOSED = GL_TRUE;
+
+  // Upload per-shader uniforms that don't change per object (p, v)
+  if (shader.hasUniform("p_matrix"))
+  {
+    glUniformMatrix4fv(shader.uniformId("p_matrix"), 1, IS_TRANSPOSED, matrices.p_matrix.data());
+  }
+  if (shader.hasUniform("v_matrix"))
+  {
+    glUniformMatrix4fv(shader.uniformId("v_matrix"), 1, IS_TRANSPOSED, matrices.v_matrix.data());
+  }
+
+  // Upload light_pv_matrix for shadow shaders (per-shader, not per-object)
+  if (shader.hasUniform("light_pv_matrix"))
+  {
+    glUniformMatrix4fv(
+        shader.uniformId("light_pv_matrix"), 1, IS_TRANSPOSED, matrices.light_pv.data());
+  }
+
+  // Bind cascaded shadow map texture array for 2nd pass shaders
+  const bool isShadow2ndPass = shaderID == DefaultShaderID::TRIANGLES_SHADOW_2ND ||
+                               shaderID == DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_2ND;
+  if (isShadow2ndPass && m_cascadeDepthArrayTexId != 0)
+  {
+    glActiveTexture(GL_TEXTURE0 + SHADOW_MAP_TEXTURE_UNIT);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, m_cascadeDepthArrayTexId);
+    if (shader.hasUniform("shadowMapArray"))
+    {
+      glUniform1i(shader.uniformId("shadowMapArray"), SHADOW_MAP_TEXTURE_UNIT);
+    }
+
+    // Upload cascade light_pv matrices (each one transposed)
+    static const std::array<const char*, 4> cascadeNames = {
+        "cascade_light_pv[0]", "cascade_light_pv[1]", "cascade_light_pv[2]", "cascade_light_pv[3]"};
+    const int N = std::min<int>(matrices.numShadowCascades, cascadeNames.size());
+    for (int c = 0; c < N; c++)
+    {
+      if (shader.hasUniform(cascadeNames[c]))
+      {
+        glUniformMatrix4fv(
+            shader.uniformId(cascadeNames[c]), 1, IS_TRANSPOSED,
+            matrices.cascade_light_pv[c].data());
+      }
+    }
+    // Upload cascade far planes and count
+    if (shader.hasUniform("num_shadow_cascades"))
+    {
+      glUniform1i(shader.uniformId("num_shadow_cascades"), matrices.numShadowCascades);
+    }
+    if (shader.hasUniform("cascade_far_planes"))
+    {
+      glUniform1fv(
+          shader.uniformId("cascade_far_planes"), matrices.numShadowCascades,
+          matrices.cascade_far_planes.data());
+    }
+  }
+
+  // Point/spot light cube shadow maps. The sampler always needs its own
+  // texture unit, since shadow and regular samplers must not share one.
+  if (isShadow2ndPass)
+  {
+    if (shader.hasUniform("pointShadowMapArray"))
+    {
+      glUniform1i(shader.uniformId("pointShadowMapArray"), POINT_SHADOW_MAP_TEXTURE_UNIT);
+    }
+    if (m_pointShadowArrayTexId != 0)
+    {
+      glActiveTexture(GL_TEXTURE0 + POINT_SHADOW_MAP_TEXTURE_UNIT);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, m_pointShadowArrayTexId);
+    }
+
+    std::array<int, MAX_LIGHTS> shadowIndices;
+    shadowIndices.fill(-1);
+    std::array<float, 2 * MAX_SHADOW_POINT_LIGHTS> nearFar = {};
+    for (size_t k = 0; k < m_pointShadowCubes.size(); k++)
+    {
+      const auto& cube = m_pointShadowCubes[k];
+      if (cube.lightIndex >= 0 && cube.lightIndex < MAX_LIGHTS)
+      {
+        shadowIndices[cube.lightIndex] = static_cast<int>(k);
+        nearFar[2 * k + 0] = cube.zNear;
+        nearFar[2 * k + 1] = cube.zFar;
+      }
+    }
+    if (shader.hasUniform("light_shadow_index"))
+    {
+      glUniform1iv(shader.uniformId("light_shadow_index"), MAX_LIGHTS, shadowIndices.data());
+    }
+    if (shader.hasUniform("point_shadow_near_far"))
+    {
+      glUniform2fv(
+          shader.uniformId("point_shadow_near_far"), MAX_SHADOW_POINT_LIGHTS, nearFar.data());
+    }
+  }
+
+  // Bind SSAO blur texture for lit shaders (all shaders that declare ssao_enabled)
+  if (shader.hasUniform("ssao_enabled"))
+  {
+    const bool ssaoActive = m_ssaoEnabled && m_ssaoBlurTex != 0;
+    glUniform1i(shader.uniformId("ssao_enabled"), ssaoActive ? 1 : 0);
+    if (ssaoActive)
+    {
+      glActiveTexture(GL_TEXTURE0 + SSAO_TEXTURE_UNIT);
+      glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTex);
+      if (shader.hasUniform("ssaoTexture"))
+      {
+        glUniform1i(shader.uniformId("ssaoTexture"), SSAO_TEXTURE_UNIT);
+      }
+      if (shader.hasUniform("ssao_power"))
+      {
+        glUniform1f(shader.uniformId("ssao_power"), m_lightParams.ssao_power);
+      }
+      if (shader.hasUniform("ssao_ambient_floor"))
+      {
+        glUniform1f(shader.uniformId("ssao_ambient_floor"), m_lightParams.ssao_ambient_floor);
+      }
+    }
+  }
+#endif
+}
+
 void CompiledViewport::processRenderQueue(
     const RenderQueue& queue,
     ShaderProgramManager& shaderManager,
@@ -1458,140 +1928,164 @@ void CompiledViewport::processRenderQueue(
 #if MRPT_HAS_OPENGL || MRPT_HAS_EGL
 
   // Clear any prior GL errors
-  while (glGetError() != GL_NO_ERROR)
+  clearOpenGLErrors();
+
+  const auto IS_TRANSPOSED = GL_TRUE;
+
+  // Runs of opaque elements with the same shader and geometry are drawn with
+  // one instanced draw call each. All their model matrices are uploaded at
+  // once, column-major, before drawing.
+  struct Batch
   {
-  }
-
-  for (const auto& [shaderID, proxyMap] : queue)
+    size_t first = 0;   //!< Index of its first element in queue.opaque
+    size_t count = 0;   //!< Number of elements (instances)
+    size_t offset = 0;  //!< Byte offset of its matrices in m_instanceBuffer
+  };
+  std::vector<Batch> batches;
+  m_instanceMatrices.clear();
+  const auto& opaque = queue.opaque;
+  for (size_t i = 0; i < opaque.size();)
   {
-    auto shader = shaderManager.getProgram(shaderID);
-    if (!shader)
+    size_t end = i + 1;
+    if (opaque[i].batchKey != 0)
     {
-      continue;
-    }
-    shader->use();
-    stats.numDrawCalls++;
-
-    const auto IS_TRANSPOSED = GL_TRUE;
-
-    // Cache uniform locations for this shader
-    const bool has_p = shader->hasUniform("p_matrix");
-    const bool has_v = shader->hasUniform("v_matrix");
-    const bool has_m = shader->hasUniform("m_matrix");
-    const bool has_mv = shader->hasUniform("mv_matrix");
-    const bool has_pmv = shader->hasUniform("pmv_matrix");
-
-    // Upload per-shader uniforms that don't change per object (p, v)
-    if (has_p)
-    {
-      glUniformMatrix4fv(shader->uniformId("p_matrix"), 1, IS_TRANSPOSED, matrices.p_matrix.data());
-    }
-
-    if (has_v)
-    {
-      glUniformMatrix4fv(shader->uniformId("v_matrix"), 1, IS_TRANSPOSED, matrices.v_matrix.data());
-    }
-
-    // Upload light_pv_matrix for shadow shaders (per-shader, not per-object)
-    const bool has_light_pv = shader->hasUniform("light_pv_matrix");
-    if (has_light_pv)
-    {
-      glUniformMatrix4fv(
-          shader->uniformId("light_pv_matrix"), 1, IS_TRANSPOSED, matrices.light_pv.data());
-    }
-
-    // Determine if this is a shadow-related shader
-    const bool isShadow2ndPass = shaderID == DefaultShaderID::TRIANGLES_SHADOW_2ND ||
-                                 shaderID == DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_2ND;
-    const bool isShadow1stPass = shaderID == DefaultShaderID::TRIANGLES_SHADOW_1ST;
-
-    // Bind cascaded shadow map texture array for 2nd pass shaders
-    if (isShadow2ndPass && m_cascadeDepthArrayTexId != 0)
-    {
-      glActiveTexture(GL_TEXTURE0 + SHADOW_MAP_TEXTURE_UNIT);
-      glBindTexture(GL_TEXTURE_2D_ARRAY, m_cascadeDepthArrayTexId);
-      if (shader->hasUniform("shadowMapArray"))
+      while (end < opaque.size() && opaque[end].batchKey == opaque[i].batchKey &&
+             opaque[end].shader == opaque[i].shader)
       {
-        glUniform1i(shader->uniformId("shadowMapArray"), SHADOW_MAP_TEXTURE_UNIT);
+        end++;
       }
-
-      // Upload cascade light_pv matrices
-      if (shader->hasUniform("cascade_light_pv"))
+    }
+    if (end - i > 1)
+    {
+      batches.push_back({i, end - i, m_instanceMatrices.size() * sizeof(float)});
+      for (size_t k = i; k < end; k++)
       {
-        // Upload as array of mat4 (each transposed)
-        const int N = matrices.numShadowCascades;
-        for (int c = 0; c < N; c++)
+        const auto& M = opaque[k].m_matrix;
+        for (int col = 0; col < 4; col++)
         {
-          const std::string uname = "cascade_light_pv[" + std::to_string(c) + "]";
-          if (shader->hasUniform(uname.c_str()))
+          for (int row = 0; row < 4; row++)
           {
-            glUniformMatrix4fv(
-                shader->uniformId(uname.c_str()), 1, IS_TRANSPOSED,
-                matrices.cascade_light_pv[c].data());
+            m_instanceMatrices.push_back(M(row, col));
           }
         }
       }
-      // Upload cascade far planes and count
-      if (shader->hasUniform("num_shadow_cascades"))
-      {
-        glUniform1i(shader->uniformId("num_shadow_cascades"), matrices.numShadowCascades);
-      }
-      if (shader->hasUniform("cascade_far_planes"))
-      {
-        glUniform1fv(
-            shader->uniformId("cascade_far_planes"), matrices.numShadowCascades,
-            matrices.cascade_far_planes.data());
-      }
     }
+    i = end;
+  }
+  if (!batches.empty())
+  {
+    m_instanceBuffer.setUsage(Buffer::Usage::StreamDraw);
+    m_instanceBuffer.createOnce();
+    m_instanceBuffer.bind();
+    m_instanceBuffer.allocate(
+        m_instanceMatrices.data(), static_cast<int>(sizeof(float) * m_instanceMatrices.size()));
+    m_instanceBuffer.unbind();
+  }
 
-    // Bind SSAO blur texture for lit shaders (all shaders that declare ssao_enabled)
-    if (shader->hasUniform("ssao_enabled"))
+  // The per-object matrices of an instanced draw are those of an object at
+  // the origin, since each instance applies its own model matrix:
+  const auto identity = CMatrixFloat44::Identity();
+  CMatrixFloat44 pv;
+  pv.asEigen() = matrices.p_matrix.asEigen() * matrices.v_matrix.asEigen();
+
+  // State of the current shader:
+  Program::Ptr shader;
+  shader_id_t shaderID = DefaultShaderID::NONE;
+  bool isShadowPass = false;
+  int loc_m = -1;
+  int loc_mv = -1;
+  int loc_pmv = -1;
+  int loc_normal = -1;
+
+  const auto uniformOrNone = [](const Program& p, const char* name)
+  { return p.hasUniform(name) ? p.uniformId(name) : -1; };
+
+  // Per-object render state: the per-pass matrices, plus the matrices of
+  // each object, overwritten for each one.
+  TRenderMatrices objState = matrices;
+
+  for (const auto* layer : {&queue.opaque, &queue.background, &queue.transparent})
+  {
+    size_t nextBatch = 0;
+    for (size_t i = 0; i < layer->size(); i++)
     {
-      const bool ssaoActive = m_ssaoEnabled && m_ssaoBlurTex != 0;
-      glUniform1i(shader->uniformId("ssao_enabled"), ssaoActive ? 1 : 0);
-      if (ssaoActive)
+      const auto& e = (*layer)[i];
+      const Batch* batch = nullptr;
+      if (layer == &queue.opaque && nextBatch < batches.size() && batches[nextBatch].first == i)
       {
-        glActiveTexture(GL_TEXTURE0 + SSAO_TEXTURE_UNIT);
-        glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTex);
-        if (shader->hasUniform("ssaoTexture"))
-          glUniform1i(shader->uniformId("ssaoTexture"), SSAO_TEXTURE_UNIT);
-        if (shader->hasUniform("ssao_power"))
-          glUniform1f(shader->uniformId("ssao_power"), m_lightParams.ssao_power);
-        if (shader->hasUniform("ssao_ambient_floor"))
-          glUniform1f(shader->uniformId("ssao_ambient_floor"), m_lightParams.ssao_ambient_floor);
+        batch = &batches[nextBatch++];
+        i += batch->count - 1;  // the whole batch is drawn now
       }
-    }
 
-    // Render all proxies using this shader
-    for (const auto& [depth, element] : proxyMap)
-    {
-      const auto& objState = element.renderState;
+      if (!shader || e.shader != shaderID)
+      {
+        shaderID = e.shader;
+        shader = shaderManager.getProgram(shaderID);
+        if (!shader)
+        {
+          continue;
+        }
+        setupShaderForPass(*shader, shaderID, matrices);
+        loc_m = uniformOrNone(*shader, "m_matrix");
+        loc_mv = uniformOrNone(*shader, "mv_matrix");
+        loc_pmv = uniformOrNone(*shader, "pmv_matrix");
+        loc_normal = uniformOrNone(*shader, "normal_matrix");
+        isShadowPass = shaderID == DefaultShaderID::TRIANGLES_SHADOW_1ST ||
+                       shaderID == DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_1ST ||
+                       shaderID == DefaultShaderID::TRIANGLES_SHADOW_2ND ||
+                       shaderID == DefaultShaderID::TEXTURED_TRIANGLES_SHADOW_2ND;
+      }
+
+      const auto& m = batch ? identity : e.m_matrix;
+      const auto& mv = batch ? matrices.v_matrix : e.mv_matrix;
+      const auto& pmv = batch ? pv : e.pmv_matrix;
 
       // Upload per-object matrix uniforms
-      if (has_m)
+      if (loc_m >= 0)
       {
-        glUniformMatrix4fv(
-            shader->uniformId("m_matrix"), 1, IS_TRANSPOSED, objState.m_matrix.data());
+        glUniformMatrix4fv(loc_m, 1, IS_TRANSPOSED, m.data());
       }
-      if (has_mv)
+      if (loc_mv >= 0)
       {
-        glUniformMatrix4fv(
-            shader->uniformId("mv_matrix"), 1, IS_TRANSPOSED, objState.mv_matrix.data());
+        glUniformMatrix4fv(loc_mv, 1, IS_TRANSPOSED, mv.data());
       }
-      if (has_pmv)
+      if (loc_pmv >= 0)
       {
-        glUniformMatrix4fv(
-            shader->uniformId("pmv_matrix"), 1, IS_TRANSPOSED, objState.pmv_matrix.data());
+        glUniformMatrix4fv(loc_pmv, 1, IS_TRANSPOSED, pmv.data());
       }
+      if (loc_normal >= 0)
+      {
+        // Normals transform with the inverse transpose of the model
+        // rotation and scale, which differs from it for non-uniform scales.
+        mrpt::math::CMatrixFloat33 N;
+        N.asEigen() = m.asEigen().block<3, 3>(0, 0);
+        if (!batch && std::abs(N.asEigen().determinant()) > 1e-12f)
+        {
+          N.asEigen() = N.asEigen().inverse().transpose().eval();
+        }
+        glUniformMatrix3fv(loc_normal, 1, IS_TRANSPOSED, N.data());
+      }
+
+      objState.m_matrix = m;
+      objState.mv_matrix = mv;
+      objState.pmv_matrix = pmv;
 
       RenderContext rc;
       rc.shader = shader.get();
       rc.shader_id = shaderID;
       rc.state = &objState;
       rc.lights = &m_lightParams;
-      rc.isShadowMapPass = isShadow1stPass || isShadow2ndPass;
+      rc.isShadowMapPass = isShadowPass;
+      if (batch)
+      {
+        rc.instanceCount = static_cast<int>(batch->count);
+        rc.instanceBuffer = &m_instanceBuffer;
+        rc.instanceBufferOffset = batch->offset;
+        stats.numInstancedDrawCalls++;
+      }
 
-      element.proxy->render(rc);
+      e.proxy->render(rc);
+      stats.numDrawCalls++;
     }
   }
 #endif
