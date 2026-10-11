@@ -122,7 +122,7 @@ void PlannerRRT_SE2_TPS::solve(
         distance_evaluator_se2;         // Plain distances in SE(2), not along PTGs
     bool is_new_best_solution = false;  // Just for logging purposes
 
-    //#define DO_LOG_TXTS
+    // #define DO_LOG_TXTS
     std::string sLogTxt;
 
     // [Algo `tp_space_rrt`: Line 5]: For each PTG
@@ -186,8 +186,10 @@ void PlannerRRT_SE2_TPS::solve(
       // ------------------------------------------------------------
       // Transform obstacles as seen from x_nearest_node -> TP_obstacles
       double TP_Obstacles_k_rand = .0;  // vector<double> TP_Obstacles;
-      const double MAX_DIST_FOR_OBSTACLES =
-          1.5 * m_PTGs[idxPTG]->getRefDistance();  // Maximum Euclidean
+      const double MAX_DIST_FOR_OBSTACLES = std::max(
+          1.5 * m_PTGs[idxPTG]->getRefDistance(),
+          m_PTGs[idxPTG]->getRefDistance() +
+              m_PTGs[idxPTG]->getMaxRobotRadius());  // Maximum Euclidean
       // distance (radius)
       // for considering
       // obstacles around the
@@ -239,8 +241,8 @@ void PlannerRRT_SE2_TPS::solve(
         // ------------------------------------------------------------
         // given d_rand and k_rand provides x,y,phi of the point in
         // c-space
-        uint32_t nStep;
-        m_PTGs[idxPTG]->getPathStepForDist(static_cast<uint16_t>(k_rand), d_new, nStep);
+        const uint32_t nStep =
+            m_PTGs[idxPTG]->getPathStepForDistClamped(static_cast<uint16_t>(k_rand), d_new);
 
         mrpt::math::TPose2D rel_pose =
             m_PTGs[idxPTG]->getPathPose(static_cast<uint16_t>(k_rand), nStep);

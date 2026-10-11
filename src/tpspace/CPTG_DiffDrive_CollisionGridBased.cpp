@@ -23,9 +23,118 @@
 #include <mrpt/serialization/stl_serialization.h>
 #include <mrpt/system/CTicTac.h>
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
+#include <limits>
 
 using namespace mrpt::nav;
+
+namespace
+{
+double pointSegmentDistance(
+    const mrpt::math::TPoint2D& p, const mrpt::math::TPoint2D& a, const mrpt::math::TPoint2D& b)
+{
+  const double abx = b.x - a.x;
+  const double aby = b.y - a.y;
+  const double len2 = abx * abx + aby * aby;
+  double t = 0;
+  if (len2 > 0)
+  {
+    t = std::clamp(((p.x - a.x) * abx + (p.y - a.y) * aby) / len2, 0.0, 1.0);
+  }
+  return std::hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby));
+}
+
+struct Box2D
+{
+  double x0 = 0;
+  double x1 = 0;
+  double y0 = 0;
+  double y1 = 0;
+};
+
+double pointBoxDistance(const mrpt::math::TPoint2D& p, const Box2D& b)
+{
+  const double dx = std::max({b.x0 - p.x, 0.0, p.x - b.x1});
+  const double dy = std::max({b.y0 - p.y, 0.0, p.y - b.y1});
+  return std::hypot(dx, dy);
+}
+
+// Liang-Barsky clipping: does the segment [a,b] touch the closed box?
+bool segmentIntersectsBox(
+    const mrpt::math::TPoint2D& a, const mrpt::math::TPoint2D& b, const Box2D& box)
+{
+  double t0 = 0;
+  double t1 = 1;
+  const double dx = b.x - a.x;
+  const double dy = b.y - a.y;
+  const double p[4] = {-dx, dx, -dy, dy};
+  const double q[4] = {a.x - box.x0, box.x1 - a.x, a.y - box.y0, box.y1 - a.y};
+  for (int i = 0; i < 4; i++)
+  {
+    if (p[i] == 0)
+    {
+      if (q[i] < 0)
+      {
+        return false;
+      }
+      continue;
+    }
+    const double r = q[i] / p[i];
+    if (p[i] < 0)
+    {
+      t0 = std::max(t0, r);
+    }
+    else
+    {
+      t1 = std::min(t1, r);
+    }
+    if (t0 > t1)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Exact Euclidean distance between an axis-aligned box and a simple (possibly
+// non-convex) polygon region; zero if they overlap.
+double boxPolygonDistance(const Box2D& box, const mrpt::math::TPolygon2D& poly)
+{
+  const mrpt::math::TPoint2D center(0.5 * (box.x0 + box.x1), 0.5 * (box.y0 + box.y1));
+  if (poly.contains(center))
+  {
+    return 0;
+  }
+  const mrpt::math::TPoint2D corners[4] = {
+      {box.x0, box.y0},
+      {box.x1, box.y0},
+      {box.x1, box.y1},
+      {box.x0, box.y1}
+  };
+
+  double dmin = std::numeric_limits<double>::max();
+  const size_t N = poly.size();
+  for (size_t i = 0; i < N; i++)
+  {
+    const auto& a = poly[i];
+    const auto& b = poly[(i + 1) % N];
+    if (segmentIntersectsBox(a, b, box))
+    {
+      return 0;
+    }
+    // Two disjoint convex sets (segment, box): the closest pair involves a
+    // vertex of one of them.
+    for (const auto& c : corners)
+    {
+      dmin = std::min(dmin, pointSegmentDistance(c, a, b));
+    }
+    dmin = std::min(dmin, pointBoxDistance(a, box));
+  }
+  return dmin;
+}
+}  // namespace
 
 /** Constructor: possible values in "params":
  *   - ref_distance: The maximum distance in PTGs
@@ -114,8 +223,6 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
 
   internal_deinitialize();  // Free previous paths
 
-  m_stepTimeDuration = diferencial_t;
-
   // Reserve the size in the buffers:
   m_trajectory.resize(m_alphaValuesCount);
 
@@ -123,10 +230,15 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
   // determine the spacing of points
   // under pure rotation
 
-  // Aux buffer:
-  TCPointVector points;
-
-  float ult_dist, ult_dist1, ult_dist2;
+  // Samples are stored at a fixed period, so step "n" happens at time
+  // n * getPathStepDuration(). The period is chosen such that, at the maximum
+  // speeds, the robot moves at most `min_dist` between samples (translation,
+  // or rotation scaled by radio_max_robot).
+  const double maxSpeed = std::max(std::abs(V_MAX), std::abs(W_MAX) * radio_max_robot);
+  ASSERT_GT_(maxSpeed, 0);
+  const auto stepsPerSample =
+      static_cast<unsigned int>(std::max(1.0, std::floor(min_dist / (maxSpeed * diferencial_t))));
+  m_stepTimeDuration = stepsPerSample * static_cast<double>(diferencial_t);
 
   // For the grid:
   float x_min = 1e3f, x_max = -1e3;
@@ -145,9 +257,9 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
       // ------------------------------------------------------------
       const float alpha = static_cast<float>(index2alpha(static_cast<uint16_t>(k)));
 
-      points.clear();
+      TCPointVector points;
       float t = .0f, dist = .0f, girado = .0f;
-      float x = .0f, y = .0f, phi = .0f, v = .0f, w = .0f, _x = .0f, _y = .0f, _phi = .0f;
+      float x = .0f, y = .0f, phi = .0f, v = .0f, w = .0f;
 
       // Sliding window with latest movement commands (for the optional
       // low-pass filtering):
@@ -156,9 +268,19 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
       // Add the first, initial point:
       points.push_back(TCPoint(x, y, phi, t, dist, v, w));
 
-      // Simulate until...
-      while (t < max_time && dist < max_dist && points.size() < max_n && fabs(girado) < 1.95 * M_PI)
+      // Set once the PTG commands a null velocity, i.e. the path has ended:
+      bool stopped = false;
+
+      // Simulate until... (checked at sample times only, to keep the samples
+      // evenly spaced in time)
+      for (unsigned int nStep = 0;; nStep++)
       {
+        if (nStep % stepsPerSample == 0 && (stopped || t >= max_time || dist >= max_dist ||
+                                            points.size() >= max_n || fabs(girado) >= 1.95 * M_PI))
+        {
+          break;
+        }
+
         // Max. aceleraciones:
         if (t > 1)
         {
@@ -169,7 +291,15 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
         }
 
         // Compute new movement command (v,w):
-        ptgDiffDriveSteeringFunction(alpha, t, x, y, phi, v, w);
+        if (stopped)
+        {
+          v = w = 0;
+        }
+        else
+        {
+          ptgDiffDriveSteeringFunction(alpha, t, x, y, phi, v, w);
+          stopped = (v == 0 && w == 0);
+        }
 
         // History of v/w ----------------------------------
         last_vs[1] = last_vs[0];
@@ -191,14 +321,10 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
 
         dist += v_inTPSpace * diferencial_t;
 
-        t += diferencial_t;
+        // Computed from the step count to avoid accumulating round-off:
+        t = static_cast<float>((nStep + 1) * static_cast<double>(diferencial_t));
 
-        // Save sample if we moved far enough:
-        ult_dist1 = static_cast<float>(sqrt(square(_x - x) + square(_y - y)));
-        ult_dist2 = static_cast<float>(fabs(radio_max_robot * (_phi - phi)));
-        ult_dist = std::max(ult_dist1, ult_dist2);
-
-        if (ult_dist > min_dist)
+        if ((nStep + 1) % stepsPerSample == 0)
         {
           // Set the (v,w) to the last record:
           points.back().v = v;
@@ -206,11 +332,6 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
 
           // And add the new record:
           points.push_back(TCPoint(x, y, phi, t, dist, v, w));
-
-          // For the next iter:
-          _x = x;
-          _y = y;
-          _phi = phi;
         }
 
         // for the grid:
@@ -220,10 +341,11 @@ void CPTG_DiffDrive_CollisionGridBased::simulateTrajectories(
         y_max = std::max(y_max, y);
       }
 
-      // Add the final point:
-      points.back().v = v;
-      points.back().w = w;
-      points.push_back(TCPoint(x, y, phi, t, dist, v, w));
+      // Every path must have at least two samples:
+      if (points.size() < 2)
+      {
+        points.push_back(TCPoint(x, y, phi, static_cast<float>(m_stepTimeDuration), dist, v, w));
+      }
 
       // Save data to C-Space path structure:
       m_trajectory[k] = points;
@@ -390,7 +512,9 @@ bool CPTG_DiffDrive_CollisionGridBased::CCollisionGrid::saveToFile(
       return false;
     }
 
-    const uint8_t serialize_version = 2;  // v1: As of jun 2012, v2: As of dec-2013
+    // v1: As of jun 2012, v2: As of dec-2013, v3: conservative cell marking
+    // and grid extent (sep-2026).
+    const uint8_t serialize_version = 3;
 
     // Save magic signature && serialization version:
     *f << COLGRID_FILE_MAGIC << serialize_version;
@@ -452,7 +576,7 @@ bool CPTG_DiffDrive_CollisionGridBased::CCollisionGrid::loadFromFile(
 
     switch (serialized_version)
     {
-      case 2:
+      case 3:
       {
         mrpt::math::CPolygon stored_shape;
         *f >> stored_shape;
@@ -465,7 +589,9 @@ bool CPTG_DiffDrive_CollisionGridBased::CCollisionGrid::loadFromFile(
       }
       break;
 
+      // v1, v2 used a non-conservative cell marking rule: rebuild.
       case 1:
+      case 2:
       default:
         // Unknown version: Maybe we are loading a file from a more
         // recent version of MRPT? Whatever, we can't read it: It's
@@ -702,13 +828,17 @@ void CPTG_DiffDrive_CollisionGridBased::internal_initialize(
   if (verbose) std::cout << "Initializing PTG '" << cacheFilename << "'...";
 
   // Simulate paths:
+  // Samples are evenly spaced in time, so slow paths need more of them: the
+  // number of samples is effectively bounded by max_time only.
+  const float max_time = 100;
+  const float diferencial_t = 0.0005f;
   const float min_dist = 0.015f;
   simulateTrajectories(
-      100,                                                     // max.tim,
-      static_cast<float>(refDistance),                         // max.dist,
-      static_cast<unsigned int>(10 * refDistance / min_dist),  // max.n,
-      0.0005f,                                                 // diferencial_t
-      min_dist                                                 // min_dist
+      max_time,                                                 // max.tim,
+      static_cast<float>(refDistance),                          // max.dist,
+      static_cast<unsigned int>(max_time / diferencial_t) + 2,  // max.n,
+      diferencial_t,                                            // diferencial_t
+      min_dist                                                  // min_dist
   );
 
   // Just for debugging, etc.
@@ -716,7 +846,21 @@ void CPTG_DiffDrive_CollisionGridBased::internal_initialize(
 
   // Check for collisions between the robot shape and the grid cells:
   // ----------------------------------------------------------------------------
-  m_collisionGrid.setSize(-refDistance, refDistance, -refDistance, refDistance, m_resolution);
+  // The footprint stays within the farthest stored reference point (about
+  // refDistance, plus up to one sample) + robot radius: obstacles beyond that
+  // can never be touched. One extra cell accounts for the cell size.
+  updateMaxRobotRadius();
+  const double robotRadius = getMaxRobotRadius();
+  double maxReach = refDistance;
+  for (const auto& path : m_trajectory)
+  {
+    for (const auto& p : path)
+    {
+      maxReach = std::max(maxReach, static_cast<double>(std::hypot(p.x, p.y)));
+    }
+  }
+  const double gridHalfSize = maxReach + robotRadius + 2 * m_resolution;
+  m_collisionGrid.setSize(-gridHalfSize, gridHalfSize, -gridHalfSize, gridHalfSize, m_resolution);
 
   const size_t Ki = getAlphaValuesCount();
   ASSERTMSG_(Ki > 0, "The PTG seems to be not initialized!");
@@ -730,11 +874,12 @@ void CPTG_DiffDrive_CollisionGridBased::internal_initialize(
   }
   else
   {
-    // BUGFIX: In case we start reading the file and in the end detected an
-    // error,
-    //         we must make sure that there's space enough for the grid:
+    // Reset all cells: a partial cache load or a previous initialization may
+    // have left entries that would make the build below skip cells.
+    const TCollisionCell emptyCell;
     m_collisionGrid.setSize(
-        -refDistance, refDistance, -refDistance, refDistance, m_collisionGrid.getResolution());
+        -gridHalfSize, gridHalfSize, -gridHalfSize, gridHalfSize, m_collisionGrid.getResolution(),
+        &emptyCell);
 
     const int grid_cx_max = static_cast<int>(m_collisionGrid.getSizeX()) - 1;
     const int grid_cy_max = static_cast<int>(m_collisionGrid.getSizeY()) - 1;
@@ -745,27 +890,50 @@ void CPTG_DiffDrive_CollisionGridBased::internal_initialize(
 
     // RECOMPUTE THE COLLISION GRIDS:
     // ---------------------------------------
+    // A cell stores the distance of sample "n" of trajectory "k" if any point
+    // of the cell square is within "r_n" of the footprint at that sample,
+    // where r_n bounds how far any footprint point moves until the next
+    // sample. A point at radius rho moves at most |v| + rho*|w|, which is
+    // <= sqrt(1 + (rho/R)^2) * sqrt(v^2 + (w*R)^2), R being
+    // turningRadiusReference, and the latter is the rate of the path distance.
+    // So r_n follows from the path distance increment, whatever the twist
+    // does between the (decimated) samples. Hence the stored distance
+    // never exceeds the distance at which the continuously swept footprint
+    // first touches ANY obstacle point inside that cell.
+    ASSERT_GT_(turningRadiusReference, 0);
+    const double sweepPerDist = std::hypot(1.0, robotRadius / turningRadiusReference);
+
     for (size_t k = 0; k < Ki; k++)
     {
-      const size_t nPoints = getPathStepCount(static_cast<uint16_t>(k));
+      const auto k16 = static_cast<uint16_t>(k);
+      const size_t nPoints = getPathStepCount(k16);
       ASSERT_(nPoints > 1);
-      for (size_t n = 0; n < (nPoints - 1); n++)
+      for (size_t n = 0; n < nPoints; n++)
       {
         // Translate and rotate the robot shape at this C-Space pose:
-        const mrpt::math::TPose2D p =
-            getPathPose(static_cast<uint16_t>(k), static_cast<uint32_t>(n));
+        const mrpt::math::TPose2D p = getPathPose(k16, static_cast<uint32_t>(n));
+
+        double sweep = 0;
+        if (n + 1 < nPoints)
+        {
+          const double dDist = getPathDist(k16, static_cast<uint32_t>(n + 1)) -
+                               getPathDist(k16, static_cast<uint32_t>(n));
+          sweep = std::max(0.0, dDist) * sweepPerDist;
+        }
 
         mrpt::math::TPoint2D bb_min(
             std::numeric_limits<double>::max(), std::numeric_limits<double>::max());
         mrpt::math::TPoint2D bb_max(
             -std::numeric_limits<double>::max(), -std::numeric_limits<double>::max());
 
+        const double ccos = cos(p.phi);
+        const double csin = sin(p.phi);
         for (size_t m = 0; m < nVerts; m++)
         {
-          transf_shape[m].x = p.x + cos(p.phi) * m_robotShape.get_vertex_x(m) -
-                              sin(p.phi) * m_robotShape.get_vertex_y(m);
-          transf_shape[m].y = p.y + sin(p.phi) * m_robotShape.get_vertex_x(m) +
-                              cos(p.phi) * m_robotShape.get_vertex_y(m);
+          transf_shape[m].x =
+              p.x + ccos * m_robotShape.get_vertex_x(m) - csin * m_robotShape.get_vertex_y(m);
+          transf_shape[m].y =
+              p.y + csin * m_robotShape.get_vertex_x(m) + ccos * m_robotShape.get_vertex_y(m);
           mrpt::keep_max(bb_max.x, transf_shape[m].x);
           mrpt::keep_max(bb_max.y, transf_shape[m].y);
           mrpt::keep_min(bb_min.x, transf_shape[m].x);
@@ -775,29 +943,42 @@ void CPTG_DiffDrive_CollisionGridBased::internal_initialize(
         // Robot shape polygon:
         const mrpt::math::TPolygon2D poly(transf_shape);
 
-        // Get the range of cells that may collide with this shape:
-        const int ix_min = std::max(0, m_collisionGrid.x2idx(bb_min.x) - 1);
-        const int iy_min = std::max(0, m_collisionGrid.y2idx(bb_min.y) - 1);
-        const int ix_max = std::min(m_collisionGrid.x2idx(bb_max.x) + 1, grid_cx_max);
-        const int iy_max = std::min(m_collisionGrid.y2idx(bb_max.y) + 1, grid_cy_max);
+        // Range of cells that may be within "sweep" of this shape:
+        const int ix_min = std::max(0, m_collisionGrid.x2idx(bb_min.x - sweep) - 1);
+        const int iy_min = std::max(0, m_collisionGrid.y2idx(bb_min.y - sweep) - 1);
+        const int ix_max = std::min(m_collisionGrid.x2idx(bb_max.x + sweep) + 1, grid_cx_max);
+        const int iy_max = std::min(m_collisionGrid.y2idx(bb_max.y + sweep) + 1, grid_cy_max);
 
-        for (int ix = ix_min; ix < ix_max; ix++)
+        const double reach = robotRadius + sweep + half_cell * std::sqrt(2.0);
+        const auto d = static_cast<float>(this->getPathDist(k16, static_cast<uint32_t>(n)));
+
+        for (int ix = ix_min; ix <= ix_max; ix++)
         {
-          const double cx = m_collisionGrid.idx2x(ix) - half_cell;
+          const double cx = m_collisionGrid.idx2x(ix);
 
-          for (int iy = iy_min; iy < iy_max; iy++)
+          for (int iy = iy_min; iy <= iy_max; iy++)
           {
-            const double cy = m_collisionGrid.idx2y(iy) - half_cell;
+            const double cy = m_collisionGrid.idx2y(iy);
 
-            if (poly.contains(mrpt::math::TPoint2D(cx, cy)))
+            // Beyond any footprint point plus the sweep margin?
+            if (mrpt::square(cx - p.x) + mrpt::square(cy - p.y) > reach * reach)
             {
-              // Collision!! Update cell info:
-              const float d = static_cast<float>(
-                  this->getPathDist(static_cast<uint16_t>(k), static_cast<uint32_t>(n)));
-              m_collisionGrid.updateCellInfo(ix, iy, static_cast<uint16_t>(k), d);
-              m_collisionGrid.updateCellInfo(ix - 1, iy, static_cast<uint16_t>(k), d);
-              m_collisionGrid.updateCellInfo(ix, iy - 1, static_cast<uint16_t>(k), d);
-              m_collisionGrid.updateCellInfo(ix - 1, iy - 1, static_cast<uint16_t>(k), d);
+              continue;
+            }
+
+            // Samples are visited in increasing distance, so an existing
+            // entry for "k" already holds the minimum:
+            if (const auto* c = m_collisionGrid.cellByIndex(ix, iy);
+                c != nullptr &&
+                std::any_of(c->begin(), c->end(), [k16](const auto& e) { return e.first == k16; }))
+            {
+              continue;
+            }
+
+            const Box2D cellBox{cx - half_cell, cx + half_cell, cy - half_cell, cy + half_cell};
+            if (boxPolygonDistance(cellBox, poly) <= sweep)
+            {
+              m_collisionGrid.updateCellInfo(ix, iy, k16, d);
             }
           }  // for iy
         }    // for ix
@@ -818,7 +999,59 @@ void CPTG_DiffDrive_CollisionGridBased::internal_initialize(
 
   }  // "else" recompute all PTG
 
+  buildFlatCollisionGrid();
+
   MRPT_END
+}
+
+void CPTG_DiffDrive_CollisionGridBased::buildFlatCollisionGrid()
+{
+  auto& g = m_flatGrid;
+  const auto& cg = m_collisionGrid;
+  const size_t nx = cg.getSizeX();
+  const size_t ny = cg.getSizeY();
+  const double res = cg.getResolution();
+
+  g.x_min = cg.getXMin();
+  g.y_min = cg.getYMin();
+  g.resolution = res;
+  g.size_x = static_cast<int>(nx);
+  g.size_y = static_cast<int>(ny);
+  g.offsets.assign(nx * ny + 1, 0);
+  g.entries.clear();
+
+  // Squared distance from the origin to the farthest point that the grid
+  // indexing maps into a non-empty cell. Index 0 also receives points up to
+  // one cell below the grid minimum, since the index is truncated toward
+  // zero, so its preimage extends one cell further out.
+  double maxR2 = 0;
+  for (size_t iy = 0; iy < ny; iy++)
+  {
+    for (size_t ix = 0; ix < nx; ix++)
+    {
+      const size_t i = ix + iy * nx;
+      const auto* cell =
+          cg.cellByIndex(static_cast<unsigned int>(ix), static_cast<unsigned int>(iy));
+      g.offsets[i] = static_cast<uint32_t>(g.entries.size());
+      if (!cell || cell->empty())
+      {
+        continue;
+      }
+      g.entries.insert(g.entries.end(), cell->begin(), cell->end());
+
+      const double x0 = g.x_min + (ix == 0 ? -1.0 : static_cast<double>(ix)) * res;
+      const double x1 = g.x_min + static_cast<double>(ix + 1) * res;
+      const double y0 = g.y_min + (iy == 0 ? -1.0 : static_cast<double>(iy)) * res;
+      const double y1 = g.y_min + static_cast<double>(iy + 1) * res;
+      const double fx = std::max(std::abs(x0), std::abs(x1));
+      const double fy = std::max(std::abs(y0), std::abs(y1));
+      maxR2 = std::max(maxR2, fx * fx + fy * fy);
+    }
+  }
+  g.offsets[nx * ny] = static_cast<uint32_t>(g.entries.size());
+  // A small margin keeps round-off in the index computation harmless:
+  const double maxR = std::sqrt(maxR2) + 1e-6;
+  g.max_radius_sq = maxR * maxR;
 }
 
 size_t CPTG_DiffDrive_CollisionGridBased::getPathStepCount(uint16_t k) const
@@ -844,25 +1077,24 @@ double CPTG_DiffDrive_CollisionGridBased::getPathDist(uint16_t k, uint32_t step)
   return m_trajectory[k][step].dist;
 }
 
-bool CPTG_DiffDrive_CollisionGridBased::getPathStepForDist(
-    uint16_t k, double dist, uint32_t& out_step) const
+std::optional<uint32_t> CPTG_DiffDrive_CollisionGridBased::getPathStepForDist(
+    uint16_t k, double dist) const
 {
   ASSERT_(k < m_trajectory.size());
   const size_t numPoints = m_trajectory[k].size();
 
   ASSERT_(numPoints > 0);
 
-  for (size_t n = 0; n < numPoints - 1; n++)
+  // Distances are non-decreasing along the trajectory: find the first sample
+  // n+1 (n >= 0) with dist >= the query, and return n.
+  const auto& traj = m_trajectory[k];
+  const auto it = std::lower_bound(
+      traj.begin() + 1, traj.end(), dist, [](const TCPoint& pt, double d) { return pt.dist < d; });
+  if (it == traj.end())
   {
-    if (m_trajectory[k][n + 1].dist >= dist)
-    {
-      out_step = static_cast<uint32_t>(n);
-      return true;
-    }
+    return std::nullopt;
   }
-
-  out_step = static_cast<uint32_t>(numPoints - 1);
-  return false;
+  return static_cast<uint32_t>(std::distance(traj.begin(), it) - 1);
 }
 
 void CPTG_DiffDrive_CollisionGridBased::updateTPObstacle(
@@ -871,11 +1103,75 @@ void CPTG_DiffDrive_CollisionGridBased::updateTPObstacle(
   ASSERTMSG_(!m_trajectory.empty(), "PTG has not been initialized!");
   const TCollisionCell& cell =
       m_collisionGrid.getTPObstacle(static_cast<float>(ox), static_cast<float>(oy));
+  if (cell.empty())
+  {
+    return;
+  }
+  // The inside-the-robot test is per point, not per cell entry:
+  if (isPointInsideRobotShape(ox, oy))
+  {
+    for (const auto& i : cell)
+    {
+      internal_TPObsDistancePostprocess(ox, oy, i.second, tp_obstacles[i.first]);
+    }
+    return;
+  }
   // Keep the minimum distance:
   for (const auto& i : cell)
   {
-    const double dist = i.second;
-    internal_TPObsDistancePostprocess(ox, oy, dist, tp_obstacles[i.first]);
+    mrpt::keep_min(tp_obstacles[i.first], static_cast<double>(i.second));
+  }
+}
+
+void CPTG_DiffDrive_CollisionGridBased::updateTPObstacles(
+    const float* xs, const float* ys, std::size_t n, std::vector<double>& tp_obstacles) const
+{
+  ASSERTMSG_(!m_trajectory.empty(), "PTG has not been initialized!");
+  const auto& g = m_flatGrid;
+  if (g.offsets.empty())
+  {
+    // Not built (e.g. a PTG restored from a stream without initialize()):
+    CParameterizedTrajectoryGenerator::updateTPObstacles(xs, ys, n, tp_obstacles);
+    return;
+  }
+  for (std::size_t i = 0; i < n; i++)
+  {
+    // The same float -> double conversion as updateTPObstacle():
+    const double ox = xs[i];
+    const double oy = ys[i];
+    if (ox * ox + oy * oy > g.max_radius_sq)
+    {
+      continue;
+    }
+    // Same indexing as CDynamicGrid::cellByPos():
+    const int cx = static_cast<int>((ox - g.x_min) / g.resolution);
+    const int cy = static_cast<int>((oy - g.y_min) / g.resolution);
+    if (cx < 0 || cx >= g.size_x || cy < 0 || cy >= g.size_y)
+    {
+      continue;
+    }
+    const size_t cell =
+        static_cast<size_t>(cx) + static_cast<size_t>(cy) * static_cast<size_t>(g.size_x);
+    const uint32_t begin = g.offsets[cell];
+    const uint32_t end = g.offsets[cell + 1];
+    if (begin == end)
+    {
+      continue;
+    }
+    // The inside-the-robot test is per point, not per cell entry:
+    if (isPointInsideRobotShape(ox, oy))
+    {
+      for (uint32_t j = begin; j < end; j++)
+      {
+        internal_TPObsDistancePostprocess(
+            ox, oy, g.entries[j].second, tp_obstacles[g.entries[j].first]);
+      }
+      continue;
+    }
+    for (uint32_t j = begin; j < end; j++)
+    {
+      mrpt::keep_min(tp_obstacles[g.entries[j].first], static_cast<double>(g.entries[j].second));
+    }
   }
 }
 
@@ -887,11 +1183,12 @@ void CPTG_DiffDrive_CollisionGridBased::updateTPObstacleSingle(
       m_collisionGrid.getTPObstacle(static_cast<float>(ox), static_cast<float>(oy));
   // Keep the minimum distance:
   for (const auto& i : cell)
+  {
     if (i.first == k)
     {
-      const double dist = i.second;
-      internal_TPObsDistancePostprocess(ox, oy, dist, tp_obstacle_k);
+      internal_TPObsDistancePostprocess(ox, oy, i.second, tp_obstacle_k);
     }
+  }
 }
 
 void CPTG_DiffDrive_CollisionGridBased::internal_readFromStream(mrpt::serialization::CArchive& in)
@@ -904,9 +1201,34 @@ void CPTG_DiffDrive_CollisionGridBased::internal_readFromStream(mrpt::serializat
   switch (version)
   {
     case 0:
+    case 1:
       internal_deinitialize();
       in >> V_MAX >> W_MAX >> turningRadiusReference >> m_robotShape >> m_resolution >>
           m_trajectory;
+      if (version >= 1)
+      {
+        in >> m_stepTimeDuration;
+      }
+      else
+      {
+        // Older versions sampled paths by distance, not at a fixed period:
+        // use the average sample period (excluding the last, final sample).
+        double sumT = 0;
+        size_t sumN = 0;
+        for (const auto& path : m_trajectory)
+        {
+          if (path.size() > 2)
+          {
+            sumT += path[path.size() - 2].t - path.front().t;
+            sumN += path.size() - 2;
+          }
+        }
+        if (sumN > 0 && sumT > 0)
+        {
+          m_stepTimeDuration = sumT / static_cast<double>(sumN);
+        }
+      }
+      updateMaxRobotRadius();
       break;
     default:
       MRPT_THROW_UNKNOWN_SERIALIZATION_VERSION(version);
@@ -919,10 +1241,11 @@ void CPTG_DiffDrive_CollisionGridBased::internal_writeToStream(
   CParameterizedTrajectoryGenerator::internal_writeToStream(out);
   CPTG_RobotShape_Polygonal::internal_shape_saveToStream(out);
 
-  const uint8_t version = 0;
+  const uint8_t version = 1;
   out << version;
 
-  out << V_MAX << W_MAX << turningRadiusReference << m_robotShape << m_resolution << m_trajectory;
+  out << V_MAX << W_MAX << turningRadiusReference << m_robotShape << m_resolution << m_trajectory
+      << m_stepTimeDuration;
 }
 
 mrpt::kinematics::CVehicleVelCmd::Ptr
