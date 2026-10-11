@@ -16,6 +16,8 @@
 
 #include <bitset>
 #include <chrono>
+#include <cstdint>
+#include <iostream>
 #include <thread>
 
 #define APPERTURE 4.712385  // in radian <=> 270°
@@ -48,17 +50,37 @@ CIbeoLuxETH::CIbeoLuxETH(string _ip, unsigned int _port) :
 CIbeoLuxETH::~CIbeoLuxETH()
 {
   m_run = false;
-  dataCollectionThread.join();
-  // Wait a little for the thread to come down
-  // Don't ask why, it just works
-  // TODO: Try without the delay
-  std::this_thread::sleep_for(10ms);
+  // The thread only exists after initialize(); joining a non-started thread
+  // would throw from a destructor and abort the process.
+  if (dataCollectionThread.joinable())
+  {
+    dataCollectionThread.join();
+    // Wait a little for the thread to come down
+    // Don't ask why, it just works
+    // TODO: Try without the delay
+    std::this_thread::sleep_for(10ms);
+  }
 }
 
 void CIbeoLuxETH::dataCollection()
 {
+  // This runs in its own thread: an exception escaping from here would
+  // terminate the whole process.
+  try
+  {
+    dataCollectionImpl();
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr << "[CIbeoLuxETH] Data collection thread stopped: " << e.what() << "\n";
+    m_state = ssError;
+  }
+}
+
+void CIbeoLuxETH::dataCollectionImpl()
+{
   unsigned char state = SearchForAF;
-  unsigned char msgIn[1], Header[20], ScanListHeader[44], ScanPointData[10];
+  unsigned char msgIn[1] = {0}, Header[20] = {0}, ScanListHeader[44] = {0}, ScanPointData[10] = {0};
   unsigned int datatype, /*scannumber,*/ numScanpoints, angleTicks, SPlayer,
       SPdistance;  // SPecho;
   int SPHangle;
@@ -155,8 +177,9 @@ void CIbeoLuxETH::dataCollection()
           SPlayer = ScanPointData[0] & 0x0F;  // two lower bits denote layer
           // SPecho  = ScanPointData[0] >> 4; // two higher bits
           // denote echo
-          SPHangle =
-              static_cast<char>(ScanPointData[3]) * 0x100 + ScanPointData[2];  // signed INT16 here
+          // Signed little-endian INT16 (plain "char" is unsigned on some archs):
+          SPHangle = static_cast<int16_t>(
+              static_cast<uint16_t>(ScanPointData[3] * 0x100 + ScanPointData[2]));
           SPdistance = ScanPointData[5] * 0x100 + ScanPointData[4];
 
           // Sanity checks
