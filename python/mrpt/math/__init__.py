@@ -31,6 +31,7 @@ TTwist3D = _b.TTwist3D
 TPose3DQuat = _b.TPose3DQuat
 CPolygon = _b.CPolygon
 CHistogram = _b.CHistogram
+CQuaternionDouble = _b.CQuaternionDouble
 
 # --- Fixed Size Matrices and Vectors ---
 # We use dir() to catch all the CMatrixDoubleXX and CVectorFixedDoubleX
@@ -38,8 +39,7 @@ CHistogram = _b.CHistogram
 _fixed_types = [name for name in dir(_b) if name.startswith(
     ("CMatrixDouble", "CVectorFixedDouble"))]
 
-for name in _fixed_types:
-    globals()[name] = getattr(_b, name)
+globals().update({n: getattr(_b, n) for n in _fixed_types})
 
 # --- Free functions ---
 wrapToPi = _b.wrapToPi
@@ -106,6 +106,7 @@ __all__ = [
     "TPose3DQuat",
     "CPolygon",
     "CHistogram",
+    "CQuaternionDouble",
     # Free functions
     "wrapToPi", "wrapTo2Pi",
 ]
