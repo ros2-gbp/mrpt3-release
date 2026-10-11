@@ -214,7 +214,8 @@ void CClientTCPSocket::connect(
   // Create the socket:
   if (INVALID_SOCKET == (m_hSock = socket(AF_INET, SOCK_STREAM, 0)))
   {
-    THROW_EXCEPTION(format("Error creating new client socket:\n%s", getLastErrorStr().c_str()));
+    THROW_EXCEPTION(
+        mrpt::format("Error creating new client socket:\n%s", getLastErrorStr().c_str()));
   }
 
   struct sockaddr_in otherAddress;
@@ -286,20 +287,21 @@ void CClientTCPSocket::connect(
 
   if (event_count == 0)
   {
-    THROW_EXCEPTION(format(
+    THROW_EXCEPTION(mrpt::format(
         "Timeout connecting to '%s:%hu':\n%s", remotePartAddress.c_str(), remotePartTCPPort,
         getLastErrorStr().c_str()));
   }
 
   if (event_count == -1)
   {
-    THROW_EXCEPTION(format(
+    THROW_EXCEPTION(mrpt::format(
         "Error connecting to '%s:%hu':\n%s", remotePartAddress.c_str(), remotePartTCPPort,
         getLastErrorStr().c_str()));
   }
 
-#elif defined(MRPT_OS_APPLE)
-  // OSX: Older select() API:
+#elif defined(MRPT_OS_APPLE) || defined(_WIN32)
+  // OSX and Windows: Older select() API. Windows reports a failed connection
+  // attempt in the "errors" set, not the "write" one.
   // Wait for connect:
   timeval timer = {0, 0};
   fd_set ss_write, ss_errors;
@@ -318,12 +320,12 @@ void CClientTCPSocket::connect(
       timeout_ms == 0 ? nullptr : &timer);
 
   if (sel_ret == 0)
-    THROW_EXCEPTION(format(
+    THROW_EXCEPTION(mrpt::format(
         "Timeout connecting to '%s:%hu':\n%s", remotePartAddress.c_str(), remotePartTCPPort,
         getLastErrorStr().c_str()));
 
   if (sel_ret == -1)
-    THROW_EXCEPTION(format(
+    THROW_EXCEPTION(mrpt::format(
         "Error connecting to '%s:%hu':\n%s", remotePartAddress.c_str(), remotePartTCPPort,
         getLastErrorStr().c_str()));
 #endif
@@ -340,13 +342,13 @@ void CClientTCPSocket::connect(
 
 #ifdef _WIN32
   if (valopt)
-    THROW_EXCEPTION(format(
+    THROW_EXCEPTION(mrpt::format(
         "Error connecting to %s:%hu. Error: %i.", remotePartAddress.c_str(), remotePartTCPPort,
         valopt));
 #else
   if (valopt)
   {
-    THROW_EXCEPTION(format(
+    THROW_EXCEPTION(mrpt::format(
         "Error connecting to %s:%hu. Error: %s.", remotePartAddress.c_str(), remotePartTCPPort,
         strerror(valopt)));
   }
@@ -369,7 +371,10 @@ void CClientTCPSocket::connect(
   // Save the IP of the other part.
   m_remotePartIP = remotePartAddress;
 
-  MRPT_END
+  MRPT_END_WITH_CLEAN_UP(
+      // A failed connect() must leave no half-open socket behind, so that this
+      // object looks exactly like a freshly-constructed one:
+      try { close(); } catch (const std::exception&){});
 }
 
 bool CClientTCPSocket::isConnected() const { return (m_hSock != INVALID_SOCKET); }
@@ -589,19 +594,20 @@ size_t CClientTCPSocket::getReadPendingBytes()
   {
     return 0;  // The socket is not connected!
   }
-  unsigned long ret = 0;
-  if (
+  // FIONREAD writes an u_long on Windows, but an int on POSIX systems (a wider
+  // type would read garbage on big-endian 64-bit platforms).
 #ifdef _WIN32
-      ioctlsocket(m_hSock, FIONREAD, &ret)
+  u_long ret = 0;
+  if (ioctlsocket(m_hSock, FIONREAD, &ret))
 #else
-      ioctl(m_hSock, FIONREAD, &ret)
+  int ret = 0;
+  if (ioctl(m_hSock, FIONREAD, &ret))
 #endif
-  )
   {
     THROW_EXCEPTION("Error invoking ioctlsocket(FIONREAD)");
   }
 
-  return ret;
+  return static_cast<size_t>(ret);
 }
 
 /*---------------------------------------------------------------
