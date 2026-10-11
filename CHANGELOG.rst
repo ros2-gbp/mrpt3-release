@@ -2,6 +2,57 @@
 Changelog for package mrpt_gui
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.2 (2026-10-11)
+------------------
+
+3.5.1 (2026-10-09)
+------------------
+
+3.5.0 (2026-10-07)
+------------------
+* Python bindings: docstrings for all members, regenerated .pyi stubs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.4.0 (2026-10-04)
+------------------
+* Python: commit generated .pyi type stubs for all modules
+* wx dialogs: drop alignment flags combined with wxEXPAND
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.1 (2026-09-29)
+------------------
+* mathplot: fix wx assert on first plot of a bitmap layer.
+* Update nanogui submodule: include <cassert> where assert() is used.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.0 (2026-09-26)
+------------------
+* changelogs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.2.0 (2026-09-16)
+------------------
+* fix: improve headless GUI testing under Xvfb and address the real failures uncovered by the coverage pass.
+* fix: correct GUI timing, mouse, modifier, and color-handling bugs that were causing crashes or wrong behavior.
+* fix: document accurate GUI skip reasons and keep CI permissions minimal and read-only.
+* feat: expand coverage for graph-slam and GUI code paths, raising the tested surface substantially.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
+3.1.3 (2026-08-12)
+------------------
+
+3.1.2 (2026-07-07)
+------------------
+
+3.1.1 (2026-07-04)
+------------------
+
+3.1.0 (2026-07-03)
+------------------
+
 3.0.4 (2026-06-17)
 ------------------
 
