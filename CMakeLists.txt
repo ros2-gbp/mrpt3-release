@@ -30,6 +30,10 @@ set(LIB_SOURCES
 set(LIB_UNIT_TEST_SOURCES
   tests/yaml2config_unittest.cpp
   tests/CConfigFileMemory_unittest.cpp
+  tests/OptionsCapable_unittest.cpp
+  tests/config_parser_unittest.cpp
+  tests/CConfigFile_unittest.cpp
+  tests/CConfigFilePrefixer_unittest.cpp
 )
 
 set(LIB_PUBLIC_HEADERS
@@ -40,6 +44,7 @@ set(LIB_PUBLIC_HEADERS
   include/mrpt/config/CLoadableOptions.h
   include/mrpt/config/CConfigFileMemory.h
   include/mrpt/config/CConfigFilePrefixer.h
+  include/mrpt/config/OptionsCapable.h
 )
 
 mrpt_add_library(
