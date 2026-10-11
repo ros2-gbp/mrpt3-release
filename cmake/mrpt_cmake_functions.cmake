@@ -24,6 +24,26 @@
 # own option() the no-op instead, so our OFF default actually sticks.
 set(BUILD_TESTING OFF CACHE BOOL "Build tests")
 
+# ROS "*dev" build farm jobs explicitly pass -DBUILD_TESTING=1 and run our
+# full unit-test suite on every commit, on top of a full from-scratch
+# --cmake-clean-cache rebuild. That doubles build time and already routinely
+# times out (>120 min) before a single test even runs (observed 2026-07-10
+# on Kdev__mrpt3__ubuntu_noble_amd64: the clean rebuild alone, compiling test
+# binaries for ~half the modules, ate the whole remaining budget and
+# `colcon test` was never invoked). The exact same tests already run on every
+# push/PR via GitHub Actions CI (which never sources a ROS environment), so
+# re-running them here adds build-farm risk without adding coverage. Detect a
+# sourced ROS environment running inside Jenkins (both `ROS_DISTRO`, set by
+# the buildfarm's `. /opt/ros/<distro>/setup.sh`, and `JENKINS_URL`, set by
+# any Jenkins job) and force tests off there, regardless of what
+# -DBUILD_TESTING was passed on the command line. The AND of both signals
+# avoids false positives for a developer who merely has ROS sourced locally.
+# Escape hatch: -DMRPT_FORCE_TESTS_ON_ROS_BUILDFARM=ON.
+option(MRPT_FORCE_TESTS_ON_ROS_BUILDFARM "Do not auto-skip tests when running on the ROS build farm" OFF)
+if (DEFINED ENV{ROS_DISTRO} AND DEFINED ENV{JENKINS_URL} AND NOT MRPT_FORCE_TESTS_ON_ROS_BUILDFARM)
+  set(BUILD_TESTING OFF CACHE BOOL "Build tests" FORCE)
+endif()
+
 include(GNUInstallDirs) # for install dirs in multilib
 include(CMakePackageConfigHelpers)
 include(CTest)
@@ -179,7 +199,8 @@ endfunction()
 function(mrpt_set_target_cxx17 TARGETNAME)
   target_compile_features(${TARGETNAME} PUBLIC cxx_std_17)
   if (MSVC)
-    target_compile_options(${TARGETNAME} PUBLIC /std:c++17)
+    # Scoped to CXX sources only: a target may also contain plain C sources
+    target_compile_options(${TARGETNAME} PUBLIC $<$<COMPILE_LANGUAGE:CXX>:/std:c++17>)
   endif()
 endfunction()
 
@@ -324,7 +345,7 @@ function(mrpt_configure_library TARGETNAME HEADERS_ONLY_LIBRARY ADDITIONAL_EXPOR
 
   # make project importable from build_dir:
   export(
-    TARGETS ${TARGETNAME}
+    TARGETS ${TARGETNAME} ${ADDITIONAL_EXPORT_TARGETS}
     # export to ROOT cmake directory (when building MRPT as a superproject)
     FILE ${CMAKE_BINARY_DIR}/${TARGETNAME}-targets.cmake
     NAMESPACE mrpt::
@@ -616,6 +637,11 @@ function(mrpt_add_executable)
       )
     endif()
 
+    if(ENABLE_COVERAGE)
+      target_compile_options(${MRPT_ADD_EXECUTABLE_TARGET} PRIVATE --coverage)
+      target_link_options(${MRPT_ADD_EXECUTABLE_TARGET} PRIVATE --coverage)
+    endif()
+
     # install:
     if (NOT MRPT_ADD_EXECUTABLE_DONT_INSTALL)
       install(TARGETS ${MRPT_ADD_EXECUTABLE_TARGET}
@@ -867,15 +893,21 @@ endfunction()
 # Defined PYTHON_INSTALL_DIR() following ROS & Debian conventions depending on the detected build environment
 # From: https://github.com/ament/ament_cmake/blob/rolling/ament_cmake_python/ament_cmake_python-extras.cmake
 macro(mrpt_ament_cmake_python_get_python_install_dir)
-  # Required for colcon to detect the python module and extend the PYTHONPATH env var:
-  set(_output "lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/")  # this is prefixed with "/opt/ros/xxx/"
+  if (DEFINED MRPT_PYTHON_INSTALL_DIR AND NOT "${MRPT_PYTHON_INSTALL_DIR}" STREQUAL "")
+    # Explicit override (e.g. Debian packaging passes
+    # -DMRPT_PYTHON_INSTALL_DIR=lib/python3/dist-packages):
+    set(_output "${MRPT_PYTHON_INSTALL_DIR}")
+  else()
+    # Default (colcon/ROS): required for colcon to detect the python module and
+    # extend the PYTHONPATH env var. This is prefixed with "/opt/ros/xxx/".
+    set(_output "lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/")
+  endif()
 
   set(PYTHON_INSTALL_DIR
     "${_output}"
     CACHE INTERNAL
     "The directory for Python library installation. This needs to be in PYTHONPATH when 'setup.py install' is called.")
   unset(_output)
-#  endif()
 endmacro()
 
 # Function to generalize Python module creation
@@ -912,8 +944,9 @@ function(mrpt_add_python_module MODULE_NAME CPP_SOURCES)
     )
 
     install(TARGETS _bindings LIBRARY DESTINATION ${PYTHON_INSTALL_DIR}/mrpt/${MODULE_NAME}/)
-    # Install the Python package
-    install(DIRECTORY python/mrpt DESTINATION ${PYTHON_INSTALL_DIR} FILES_MATCHING PATTERN "*.py")
+    # Install the Python package, with its type stubs (scripts/generate_python_stubs.py)
+    install(DIRECTORY python/mrpt DESTINATION ${PYTHON_INSTALL_DIR}
+      FILES_MATCHING PATTERN "*.py" PATTERN "*.pyi" PATTERN "py.typed")
 
     # On Windows, the loader searches a loaded extension module's own directory
     # for its dependent DLLs (mrpt module DLLs, vcpkg runtime DLLs, ...) — PATH

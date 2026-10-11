@@ -2,6 +2,56 @@
 Changelog for package mrpt_common
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.2 (2026-10-11)
+------------------
+
+3.5.1 (2026-10-09)
+------------------
+
+3.5.0 (2026-10-07)
+------------------
+* CMake config: add EXTRA_PRE_DEPS_CONFIG_CMDS hook; mrpt_imgui_vendor uses it to prefer GLVND (fixes CMP0072 warning in consumers)
+* Contributors: Jose Luis Blanco-Claraco
+
+3.4.0 (2026-10-04)
+------------------
+* Python: commit generated .pyi type stubs for all modules
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.1 (2026-09-29)
+------------------
+
+3.3.0 (2026-09-26)
+------------------
+* Merge pull request `#1419 <https://github.com/MRPT/mrpt/issues/1419>`_ from MRPT/fix/windows-imgui-glew-link
+* fix(mrpt_common): include additional export targets in build-tree export()
+* changelogs
+* mrpt_common: propagate --coverage to mrpt_add_executable
+* Contributors: Jose Luis Blanco-Claraco
+
+
+3.2.0 (2026-09-16)
+------------------
+* Merge branch 'develop' into fix/stereo-rectify-map-axis-swap
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
+3.1.3 (2026-08-12)
+------------------
+* cmake: skip building tests on the ROS build farm's dev jobs to prevent timeouts. Use -DMRPT_FORCE_TESTS_ON_ROS_BUILDFARM=ON to override.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.2 (2026-07-07)
+------------------
+
+3.1.1 (2026-07-04)
+------------------
+
+3.1.0 (2026-07-03)
+------------------
+
 3.0.4 (2026-06-17)
 ------------------
 
