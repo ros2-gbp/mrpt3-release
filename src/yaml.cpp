@@ -12,7 +12,6 @@
  SPDX-License-Identifier: BSD-3-Clause
 */
 
-#include <libfyaml/libfyaml-core.h>
 #include <mrpt/containers/config.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/exceptions.h>
@@ -42,6 +41,7 @@
 #include "mrpt/containers/YamlEmitOptions.h"
 
 #if MRPT_HAS_FYAML
+#include "yaml_fy_shim.h"
 #endif
 
 using namespace mrpt::containers;
@@ -455,7 +455,7 @@ void yaml::printDebugStructure(std::ostream& o) const
   internalPrintDebugStructure(*n, o, indent);
 }
 
-bool yaml::internalPrintNodeAsYAML(const node_t& p, std::ostream& o, const InternalPrintState& ps)
+bool yaml::internalPrintNodeAsYAML(const node_t& p, std::ostream& o, InternalPrintState ps)
 {
   // Build a comments_t view (all-empty if no meta):
   static const comments_t emptyComments{};
@@ -467,10 +467,23 @@ bool yaml::internalPrintNodeAsYAML(const node_t& p, std::ostream& o, const Inter
     const std::string sInd(ps.indent, ' ');
     const std::string& comment = tc.value();
 
+    // A pending newline (e.g. this node is the value-side of a "key:" map
+    // entry, so the stream currently ends right after the ':') must be
+    // emitted before the comment text, not appended directly onto the
+    // previous line. Otherwise the comment's '#' merges with the preceding
+    // token (e.g. "modules:# comment"), which is not a valid YAML comment
+    // marker (a '#' must be preceded by whitespace) and corrupts the whole
+    // document on re-parse.
+    const bool wasPendingNL = ps.needsNL;
+    if (wasPendingNL && !ps.nlWritten)
+    {
+      o << "\n";
+    }
+
     // Split line by line:
     for (size_t i = 0; i < comment.size();)
     {
-      if (i > 0)
+      if (i > 0 || wasPendingNL)
       {
         o << sInd;
       }
@@ -487,8 +500,17 @@ bool yaml::internalPrintNodeAsYAML(const node_t& p, std::ostream& o, const Inter
 
       i += lineLen + 1;
     }
-    // Indent of next line:
-    if (!comment.empty())
+    // Indent of next line - only when the comment did NOT already hand off
+    // a pending newline to the value that follows: in that case, the type
+    // dispatch below (map/sequence) applies the indent bump for that value
+    // exactly as if there had been no comment, so printing it here too would
+    // misalign (or duplicate) the indentation. The newline itself is already
+    // written, though.
+    if (wasPendingNL)
+    {
+      ps.nlWritten = true;
+    }
+    else if (!comment.empty())
     {
       o << sInd;
     }
@@ -506,12 +528,16 @@ bool yaml::internalPrintNodeAsYAML(const node_t& p, std::ostream& o, const Inter
   }
 
   auto ps2 = ps;
+  ps2.nlWritten = false;  // consumed here, children start a fresh line
 
   if (p.isMap())
   {
     if (ps.needsNL)
     {
-      o << "\n";
+      if (!ps.nlWritten)
+      {
+        o << "\n";
+      }
       ps2.indent += 2;
       ps2.needsNL = false;
     }
@@ -528,7 +554,10 @@ bool yaml::internalPrintNodeAsYAML(const node_t& p, std::ostream& o, const Inter
       }
       else
       {
-        o << "\n";
+        if (!ps.nlWritten)
+        {
+          o << "\n";
+        }
         if (ps.eo.indentSequences)
         {
           ps2.indent += 2;
@@ -700,7 +729,15 @@ bool yaml::internalPrintAsYAML(
       internalPrintNodeAsYAML(e, o, ps2);
       first = false;
     }
-    o << "]\n";
+    o << "]";
+    if (const auto& rc = cs[static_cast<size_t>(CommentPosition::RIGHT)]; rc.has_value())
+    {
+      internalPrintRightComment(o, rc.value());
+    }
+    else
+    {
+      o << "\n";
+    }
   }
   else
   {
@@ -725,20 +762,56 @@ bool yaml::internalPrintAsYAML(
     const InternalPrintState& ps,
     [[maybe_unused]] const comments_t& cs)
 {
+  constexpr auto RIGHT = static_cast<size_t>(CommentPosition::RIGHT);
+
   const std::string sInd(ps.indent, ' ');
   for (const auto& kv : m)
   {
+    // A right comment on the key (the parser attaches "key:  # comment" to
+    // the key when the value is empty or a block collection) cannot be
+    // printed between the key and its ':'. Scalars and flow sequences take
+    // it as their own right comment; block collections get it after the ':'.
+    const node_t* k = &kv.first;
+    const node_t* v = &kv.second;
+    node_t keyCopy;
+    node_t valueCopy;
+    std::optional<std::string> commentAfterColon;
+    if (k->meta && k->meta->comments[RIGHT].has_value())
+    {
+      keyCopy = *k;
+      const std::string keyComment = keyCopy.meta->comments[RIGHT].value();
+      keyCopy.meta->comments[RIGHT].reset();
+      k = &keyCopy;
+
+      const bool isBlock = v->isMap() || (v->isSequence() && !v->printInShortFormat);
+      if (isBlock)
+      {
+        commentAfterColon = keyComment;
+      }
+      else
+      {
+        valueCopy = *v;
+        auto& slot = valueCopy.commentSlot(CommentPosition::RIGHT);
+        slot = slot.has_value() ? keyComment + " " + slot.value() : keyComment;
+        v = &valueCopy;
+      }
+    }
+
     o << sInd;
     auto ps2 = ps;
     ps2.needsSpace = false;
-    internalPrintNodeAsYAML(kv.first, o, ps2);
+    internalPrintNodeAsYAML(*k, o, ps2);
     o << ":";
-    const node_t& v = kv.second;
 
     ps2 = ps;
     ps2.needsNL = true;
     ps2.needsSpace = true;
-    bool const r = internalPrintNodeAsYAML(v, o, ps2);
+    if (commentAfterColon)
+    {
+      internalPrintRightComment(o, *commentAfterColon);
+      ps2.nlWritten = true;
+    }
+    bool const r = internalPrintNodeAsYAML(*v, o, ps2);
 
     if (!r)
     {
@@ -849,7 +922,9 @@ bool yaml::internalPrintAsYAML(
         }
         else if constexpr (std::is_same_v<V, double>)
         {
-          const std::string s = mrpt::format("%.16g", val);
+          // 17 significant digits are required to round-trip any IEEE-754
+          // double exactly; 16 is not always enough.
+          const std::string s = mrpt::format("%.17g", val);
           o << s;
           if (s.find('.') == std::string::npos && s.find('e') == std::string::npos &&
               s.find('E') == std::string::npos && s.find('n') == std::string::npos &&
@@ -909,38 +984,43 @@ yaml::scalar_t textToScalar(const std::string& s)
     return yaml::scalar_t(false);
   }
 
+  // A leading-zero digit string (e.g. "00", "007") is ambiguous (would imply
+  // octal in YAML 1.1; YAML 1.2 forbids leading zeros in ints) and, in
+  // practice, is almost always a zero-padded identifier (a sequence number,
+  // a zip code, ...) that the user wants preserved verbatim, not a number.
+  // Guard both the int AND the float branches below with it: a plain digit
+  // run stays a string. A genuine float like "0.5" or "0e3" is unaffected
+  // (it fails the "all digits" check, since it contains '.'/'e').
+  const bool hasHexPrefix =
+      (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) ||
+      (s.size() > 3 && (s[0] == '+' || s[0] == '-') && s[1] == '0' && (s[2] == 'x' || s[2] == 'X'));
+  const std::size_t signLen = (!s.empty() && (s[0] == '+' || s[0] == '-')) ? 1u : 0u;
+  const bool leadingZeroDigitRun = !hasHexPrefix && s.size() > signLen + 1 && s[signLen] == '0' &&
+                                   s.find_first_not_of("0123456789", signLen) == std::string::npos;
+
   // tag:yaml.org,2002:int — try signed first, then unsigned for large values
-  // Reject leading zeros (would imply octal in YAML 1.1; YAML 1.2 forbids them)
-  if (!s.empty() &&
+  if (!leadingZeroDigitRun && !s.empty() &&
       ((std::isdigit(static_cast<unsigned char>(s[0])) != 0) || s[0] == '-' || s[0] == '+'))
   {
-    const bool hasHexPrefix = (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) ||
-                              (s.size() > 3 && (s[0] == '+' || s[0] == '-') && s[1] == '0' &&
-                               (s[2] == 'x' || s[2] == 'X'));
-    const std::size_t signLen = (s[0] == '+' || s[0] == '-') ? 1u : 0u;
-    const bool leadingZeroOctal = !hasHexPrefix && s.size() > signLen + 1 && s[signLen] == '0';
-    if (!leadingZeroOctal)
+    char* end = nullptr;
+    errno = 0;
+    const long long iv = std::strtoll(s.c_str(), &end, 0);
+    if (end != nullptr && end != s.c_str() && *end == '\0' && errno != ERANGE)
     {
-      char* end = nullptr;
-      errno = 0;
-      const long long iv = std::strtoll(s.c_str(), &end, 0);
-      if (end != nullptr && end != s.c_str() && *end == '\0' && errno != ERANGE)
-      {
-        return yaml::scalar_t(static_cast<int64_t>(iv));
-      }
+      return yaml::scalar_t(static_cast<int64_t>(iv));
+    }
 
-      // Large positive — try unsigned
-      errno = 0;
-      const unsigned long long uv = std::strtoull(s.c_str(), &end, 0);
-      if (end != nullptr && end != s.c_str() && *end == '\0' && errno != ERANGE)
-      {
-        return yaml::scalar_t(static_cast<uint64_t>(uv));
-      }
+    // Large positive — try unsigned
+    errno = 0;
+    const unsigned long long uv = std::strtoull(s.c_str(), &end, 0);
+    if (end != nullptr && end != s.c_str() && *end == '\0' && errno != ERANGE)
+    {
+      return yaml::scalar_t(static_cast<uint64_t>(uv));
     }
   }
 
   // tag:yaml.org,2002:float
-  if (!s.empty())
+  if (!leadingZeroDigitRun && !s.empty())
   {
     char* end = nullptr;
     errno = 0;
@@ -958,7 +1038,7 @@ yaml::scalar_t textToScalar(const std::string& s)
 #if MRPT_HAS_FYAML
 namespace
 {
-std::optional<yaml::node_t> recursiveParse(struct fy_parser* p);
+std::optional<yaml::node_t> recursiveParse(mrpt_fy_parser_t* p);
 }
 static bool MRPT_YAML_PARSER_VERBOSE = mrpt::get_env<bool>("MRPT_YAML_PARSER_VERBOSE", false);
 
@@ -975,117 +1055,61 @@ static bool MRPT_YAML_PARSER_VERBOSE = mrpt::get_env<bool>("MRPT_YAML_PARSER_VER
 namespace
 {
 
-std::optional<std::string> extractComment(struct fy_token* t, enum fy_comment_placement cp)
+void parseEventCommentsAndMarks(const mrpt_fy_event_t& ev, yaml::node_t& n)
 {
-#if MRPT_LIBFYAML_VERSION >= 0x000904  // 0.9.4
-  const char* strRet = fy_token_get_comment(t, cp);
-#else
-  std::array<char, 2048> str = {};
-  const char* strRet = fy_token_get_comment(t, str.data(), str.size(), cp);
-#endif
-
-  if (strRet == nullptr || strRet[0] == '\0')
+  if (ev.comment_top != nullptr)
   {
-    return {};
+    n.commentSlot(CommentPosition::TOP).emplace(ev.comment_top);
   }
 
-  // str is already a 0-terminated string:
-  auto c = std::string(strRet);
-
-  PARSER_DBG_OUT(
-      "token: " << reinterpret_cast<void*>(t) << " comment [" << static_cast<int>(cp) << "]: '" << c
-                << "'");
-
-  return c;
-}
-
-void parseTokenCommentsAndMarks(struct fy_token* tk, yaml::node_t& n)
-{
-  if (tk == nullptr)
+  if (ev.comment_right != nullptr)
   {
-    return;
+    n.commentSlot(CommentPosition::RIGHT).emplace(ev.comment_right);
   }
 
-  if (auto cT = extractComment(tk, fycp_top); cT)
+  if (ev.comment_bottom != nullptr)
   {
-    n.commentSlot(CommentPosition::TOP).emplace(std::move(cT.value()));
+    n.commentSlot(CommentPosition::BOTTOM).emplace(ev.comment_bottom);
   }
 
-  if (auto cR = extractComment(tk, fycp_right); cR)
+  if (ev.has_mark)
   {
-    n.commentSlot(CommentPosition::RIGHT).emplace(std::move(cR.value()));
-  }
-
-  if (auto cB = extractComment(tk, fycp_bottom); cB)
-  {
-    n.commentSlot(CommentPosition::BOTTOM).emplace(std::move(cB.value()));
-  }
-
-  if (const struct fy_mark* mrk = fy_token_start_mark(tk); mrk)
-  {
-    n.marks.column = mrk->column;
-    n.marks.line = mrk->line;
-    n.marks.input_pos = mrk->input_pos;
+    n.marks.column = ev.column;
+    n.marks.line = ev.line;
+    n.marks.input_pos = ev.input_pos;
   }
 }
 
-std::optional<yaml::node_t> recursiveParse(struct fy_parser* p)
+std::optional<yaml::node_t> recursiveParse(mrpt_fy_parser_t* p)
 {
   MRPT_START
 
-  struct fy_event* event = fy_parser_parse(p);
-  if (event == nullptr)
+  mrpt_fy_event_t event{};
+  if (mrpt_fy_parser_next(p, &event) != 0)
   {
-    return {};
+    mrpt_fy_event_release(&event);
+    THROW_EXCEPTION("Error parsing YAML/JSON text");
   }
 
   // process event:
-  switch (event->type)
+  switch (event.type)
   {
-    case FYET_NONE:
+    case MRPT_FY_EV_END:
     {
-      PARSER_DBG_OUT("Event: None");
-      fy_parser_event_free(p, event);  // free event
-      return recursiveParse(p);        // Keep going
+      PARSER_DBG_OUT("Event: End");
+      mrpt_fy_event_release(&event);
+      return {};
     }
     break;
-    case FYET_STREAM_START:
-    {
-      PARSER_DBG_OUT("Event: Stream start");
-      fy_parser_event_free(p, event);  // free event
-      return recursiveParse(p);        // Keep going
-    }
-    break;
-    case FYET_STREAM_END:
-    {
-      PARSER_DBG_OUT("Event: Stream end");
-      fy_parser_event_free(p, event);  // free event
-      return recursiveParse(p);        // Keep going
-    }
-    break;
-    case FYET_DOCUMENT_START:
-    {
-      PARSER_DBG_OUT("Event: Doc start");
-      fy_parser_event_free(p, event);  // free event
-      return recursiveParse(p);        // Keep going
-    }
-    break;
-    case FYET_DOCUMENT_END:
-    {
-      PARSER_DBG_OUT("Event: Doc end");
-      fy_parser_event_free(p, event);  // free event
-      return recursiveParse(p);        // Keep going
-    }
-    break;
-    case FYET_MAPPING_START:
+    case MRPT_FY_EV_MAP_START:
     {
       PARSER_DBG_OUT("Event: MAP START");
-      fy_parser_event_free(p, event);  // free event
 
       yaml::node_t n;
       yaml::map_t& m = n.d.emplace<yaml::map_t>();
 
-      parseTokenCommentsAndMarks(event->scalar.value, n);
+      parseEventCommentsAndMarks(event, n);
+      mrpt_fy_event_release(&event);
 
       for (;;)
       {
@@ -1113,21 +1137,21 @@ std::optional<yaml::node_t> recursiveParse(struct fy_parser* p)
       return n;
     }
     break;
-    case FYET_MAPPING_END:
+    case MRPT_FY_EV_MAP_END:
     {
       PARSER_DBG_OUT("Event: MAP END");
-      fy_parser_event_free(p, event);  // free event
+      mrpt_fy_event_release(&event);
       return {};
     }
     break;
-    case FYET_SEQUENCE_START:
+    case MRPT_FY_EV_SEQ_START:
     {
       PARSER_DBG_OUT("Event: SEQ START");
-      fy_parser_event_free(p, event);  // free event
       yaml::node_t n;
       yaml::sequence_t& s = n.d.emplace<yaml::sequence_t>();
 
-      parseTokenCommentsAndMarks(event->scalar.value, n);
+      parseEventCommentsAndMarks(event, n);
+      mrpt_fy_event_release(&event);
 
       for (;;)
       {
@@ -1142,48 +1166,42 @@ std::optional<yaml::node_t> recursiveParse(struct fy_parser* p)
       return n;
     }
     break;
-    case FYET_SEQUENCE_END:
+    case MRPT_FY_EV_SEQ_END:
     {
       PARSER_DBG_OUT("Event: SEQ END");
-      fy_parser_event_free(p, event);  // free event
+      mrpt_fy_event_release(&event);
       return {};
     }
     break;
-    case FYET_SCALAR:
+    case MRPT_FY_EV_SCALAR:
     {
-      size_t strValueLen = 0;
-      const char* strValue = fy_token_get_text(event->scalar.value, &strValueLen);
-      const std::string sValue(strValue, strValueLen);
-
-      PARSER_DBG_OUT(
-          "token: " << reinterpret_cast<void*>(event->scalar.value)
-                    << " Scalar: implicit=" << (event->scalar.tag_implicit ? "1" : "0")
-                    << " tag: " << static_cast<void*>(event->scalar.tag)
-                    << " anchor: " << static_cast<void*>(event->scalar.anchor)
-                    << fy_token_get_text0(event->scalar.anchor) << " value: " << sValue);
-
-      if (event->scalar.value != nullptr)
+      if (event.text == nullptr)
       {
-        yaml::node_t n;
-        n.d.emplace<yaml::scalar_t>(textToScalar(sValue));
-
-        parseTokenCommentsAndMarks(event->scalar.value, n);
-
-        fy_parser_event_free(p, event);  // free event
-        return n;
+        mrpt_fy_event_release(&event);
+        THROW_EXCEPTION(
+            "Unexpected empty scalar?! Re-run with environment "
+            "variable MRPT_YAML_PARSER_VERBOSE=1 to get more details.");
       }
 
-      THROW_EXCEPTION(
-          "Unexpected empty scalar?! Re-run with environment "
-          "variable MRPT_YAML_PARSER_VERBOSE=1 to get more details.");
+      const std::string sValue(event.text, event.text_len);
+
+      PARSER_DBG_OUT(
+          "Scalar: value: " << sValue
+                            << " anchor: " << (event.anchor_text ? event.anchor_text : ""));
+
+      yaml::node_t n;
+      n.d.emplace<yaml::scalar_t>(textToScalar(sValue));
+
+      parseEventCommentsAndMarks(event, n);
+      mrpt_fy_event_release(&event);
+
+      return n;
     }
     break;
-    case FYET_ALIAS:
-      fy_parser_event_free(p, event);  // free event
-      return recursiveParse(p);        // Keep going
   };
 
-  THROW_EXCEPTION_FMT("Unexpected parser event type %i", event->type);
+  mrpt_fy_event_release(&event);
+  THROW_EXCEPTION_FMT("Unexpected parser event type %i", static_cast<int>(event.type));
 
 #undef PARSER_DBG_OUT
   MRPT_END
@@ -1199,20 +1217,8 @@ void yaml::loadFromText(const std::string& yamlTextBlock)
   // Reset:
   *this = yaml();
 
-  struct fy_parse_cfg cfg
-  {
-  };
-  cfg.search_path = "";
-  cfg.diag = nullptr;
-  cfg.flags = FYPCF_PARSE_COMMENTS;
-
-  struct fy_parser* parser = fy_parser_create(&cfg);
+  mrpt_fy_parser_t* parser = mrpt_fy_parser_create(yamlTextBlock.data(), yamlTextBlock.size());
   ASSERT_(parser);
-
-  if (fy_parser_set_string(parser, yamlTextBlock.data(), yamlTextBlock.size()) != 0)
-  {
-    THROW_EXCEPTION("Error in fy_parser_set_string()");
-  }
 
   auto optNode = recursiveParse(parser);
   if (optNode.has_value())
@@ -1220,7 +1226,7 @@ void yaml::loadFromText(const std::string& yamlTextBlock)
     root_ = std::move(optNode.value());
   }
 
-  fy_parser_destroy(parser);
+  mrpt_fy_parser_destroy(parser);
 
 #else
   THROW_EXCEPTION("MRPT was built without libfyaml");
