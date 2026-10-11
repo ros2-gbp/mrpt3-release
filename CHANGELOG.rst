@@ -2,6 +2,51 @@
 Changelog for package mrpt_libapps_gui
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.2 (2026-10-11)
+------------------
+
+3.5.1 (2026-10-09)
+------------------
+
+3.5.0 (2026-10-07)
+------------------
+
+3.4.0 (2026-10-04)
+------------------
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.1 (2026-09-29)
+------------------
+
+3.3.0 (2026-09-26)
+------------------
+* fix formatting
+* fix: qualify mrpt::format() calls to avoid ambiguity with std::format
+* changelogs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.2.0 (2026-09-16)
+------------------
+* feat: complete API cleanups for const-correctness, archive behavior, and point-map accessors.
+* fix: strengthen deep const semantics in smart-pointer containers and related map/view APIs.
+* fix: replace the brittle points-map accessor with a safer generic conversion helper.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+
+3.1.3 (2026-08-12)
+------------------
+
+3.1.2 (2026-07-07)
+------------------
+
+3.1.1 (2026-07-04)
+------------------
+
+3.1.0 (2026-07-03)
+------------------
+
 3.0.4 (2026-06-17)
 ------------------
 
