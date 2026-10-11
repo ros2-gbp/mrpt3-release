@@ -13,7 +13,11 @@
 */
 
 #include <gtest/gtest.h>
+#include <mrpt/math/TPose3D.h>
 #include <mrpt/topography.h>
+#include <mrpt/topography/registerAllClasses.h>
+
+#include <vector>
 
 using namespace mrpt;
 using namespace mrpt::math;
@@ -108,4 +112,339 @@ TEST(TopographyConversion, UTMToGeodetic_WGS84)
 
   EXPECT_NEAR(gc.lat, 36.829293, 1e-6);
   EXPECT_NEAR(gc.lon, -2.404508, 1e-6);
+}
+
+TEST(TopographyConversion, UTMToGeodetic_InvalidHemisphereThrows)
+{
+  double lon;
+  double lat;
+  EXPECT_THROW(
+      mrpt::topography::UTMToGeodetic(553103.020, 4076100.969, 30, 'Z', lon, lat), std::exception);
+}
+
+TEST(TopographyConversion, geodeticToUTM_SouthernHemisphereRoundTrip)
+{
+  // Regression test: geodeticToUTM() must apply the standard UTM false
+  // northing for the southern hemisphere, matching the convention that
+  // UTMToGeodetic() expects on its input (northing always positive).
+  for (const auto& p :
+       {TGeodeticCoords(-33.45, -70.6667, 0.0), TGeodeticCoords(-89.9, 45.0, 0.0),
+        TGeodeticCoords(-0.5, 10.0, 0.0)})
+  {
+    TUTMCoords utm;
+    int zone = 0;
+    char band = 0;
+    geodeticToUTM(p, utm, zone, band);
+
+    // Northing must be a positive value using the false-northing
+    // convention for the southern hemisphere.
+    EXPECT_GT(utm.y, 0.0);
+
+    TGeodeticCoords back;
+    UTMToGeodetic(utm, zone, 'S', back);
+    EXPECT_NEAR(back.lat, p.lat, 1e-4);
+    EXPECT_NEAR(back.lon, p.lon, 1e-4);
+  }
+}
+
+TEST(TopographyConversion, geodeticToUTM_and_GeodeticToUTM_areConsistent)
+{
+  // The double-based (legacy) GeodeticToUTM() and the TGeodeticCoords-based
+  // geodeticToUTM() implement the same projection and must agree,
+  // including for points south of the equator.
+  const std::vector<std::pair<double, double>> latlon = {
+      {36.829293, -2.404508},
+      {      0.0,       0.0},
+      {   -33.45,  -70.6667},
+      {  51.5074,   -0.1278},
+      {    -89.9,      45.0},
+      {     89.9,      45.0}
+  };
+
+  for (const auto& [lat, lon] : latlon)
+  {
+    double x1 = 0;
+    double y1 = 0;
+    int zone1 = 0;
+    char band1 = 0;
+    GeodeticToUTM(lat, lon, x1, y1, zone1, band1);
+
+    TGeodeticCoords gc(lat, lon, 0.0);
+    TUTMCoords utm2;
+    int zone2 = 0;
+    char band2 = 0;
+    geodeticToUTM(gc, utm2, zone2, band2);
+
+    EXPECT_EQ(zone1, zone2);
+    EXPECT_EQ(band1, band2);
+    EXPECT_NEAR(x1, utm2.x, 1e-3);
+    EXPECT_NEAR(y1, utm2.y, 1e-3);
+  }
+}
+
+TEST(TopographyConversion, UTMLatitudeBandsAcrossAllRanges)
+{
+  // Exercise the full range of UTM latitude bands (C..X, skipping I and O),
+  // spanning both hemispheres.
+  const std::vector<std::pair<double, char>> cases = {
+      {-79, 'C'},
+      {-70, 'D'},
+      {-60, 'E'},
+      {-50, 'F'},
+      {-42, 'G'},
+      {-34, 'H'},
+      {-28, 'J'},
+      {-20, 'K'},
+      {-12, 'L'},
+      { -4, 'M'},
+      {  4, 'N'},
+      { 12, 'P'},
+      { 20, 'Q'},
+      { 28, 'R'},
+      { 36, 'S'},
+      { 44, 'T'},
+      { 52, 'U'},
+      { 60, 'V'},
+      { 68, 'W'},
+      { 75, 'X'},
+  };
+  for (const auto& [lat, band] : cases)
+  {
+    TGeodeticCoords gc(lat, 10.0, 0.0);
+    TUTMCoords utm;
+    int zone = 0;
+    char out_band = 0;
+    geodeticToUTM(gc, utm, zone, out_band);
+    EXPECT_EQ(out_band, band) << "lat=" << lat;
+  }
+}
+
+TEST(TopographyConversion, geocentricToGeodetic_PoleHeightIsAccurate)
+{
+  // Regression test: the height computation at/near the poles must not
+  // blow up numerically (a naive p/cos(lat) formula is degenerate there).
+  for (double lat : {89.999, 90.0, -90.0})
+  {
+    TGeodeticCoords in(lat, 10.0, 100.0);
+    TGeocentricCoords geo;
+    geodeticToGeocentric_WGS84(in, geo);
+
+    TGeodeticCoords out;
+    geocentricToGeodetic(geo, out);
+
+    EXPECT_NEAR(out.height, 100.0, 1e-3) << "lat=" << lat;
+    EXPECT_NEAR(std::abs(out.lat.decimal_value), std::abs(lat), 1e-6);
+  }
+}
+
+TEST(TopographyConversion, geocentricToGeodetic_Equator)
+{
+  TGeocentricCoords gc(TEllipsoid::Ellipsoid_WGS84().sa, 0.0, 0.0);
+  TGeodeticCoords out;
+  geocentricToGeodetic(gc, out);
+  EXPECT_NEAR(out.lat.decimal_value, 0.0, 1e-9);
+  EXPECT_NEAR(out.lon.decimal_value, 0.0, 1e-9);
+  EXPECT_NEAR(out.height, 0.0, 1e-6);
+}
+
+TEST(TopographyConversion, geocentricToENU_WGS84_PointAndVectorOverloadsMatch)
+{
+  const TGeodeticCoords ref(36.714459075, -4.4789588283333330, 38.8887);
+
+  std::vector<TPoint3D> geocentric_pts;
+  for (const auto& g :
+       {TGeodeticCoords(36.716411055, -4.475828390, 48.243),
+        TGeodeticCoords(36.720000000, -4.470000000, 100.0),
+        TGeodeticCoords(36.700000000, -4.500000000, 0.0)})
+  {
+    TPoint3D p;
+    geodeticToGeocentric_WGS84(g, p);
+    geocentric_pts.push_back(p);
+  }
+
+  std::vector<TPoint3D> enu_batch;
+  geocentricToENU_WGS84(geocentric_pts, enu_batch, ref);
+  ASSERT_EQ(enu_batch.size(), geocentric_pts.size());
+
+  for (size_t i = 0; i < geocentric_pts.size(); i++)
+  {
+    TPoint3D enu_single;
+    geocentricToENU_WGS84(geocentric_pts[i], enu_single, ref);
+    EXPECT_NEAR(enu_single.x, enu_batch[i].x, 1e-9);
+    EXPECT_NEAR(enu_single.y, enu_batch[i].y, 1e-9);
+    EXPECT_NEAR(enu_single.z, enu_batch[i].z, 1e-9);
+  }
+}
+
+TEST(TopographyConversion, ENU_axes_from_WGS84_ConsistentWithGeodeticToENU)
+{
+  const TGeodeticCoords ref(36.714459075, -4.4789588283333330, 38.8887);
+  const TGeodeticCoords target(36.716411055, -4.475828390, 48.243);
+
+  TPoint3D p_enu;
+  geodeticToENU_WGS84(target, p_enu, ref);
+
+  TPose3D enu_axes;
+  ENU_axes_from_WGS84(ref, enu_axes, false);
+
+  const TPoint3D p_geocentric_via_pose = enu_axes.composePoint(p_enu);
+
+  TPoint3D p_geocentric_direct;
+  geodeticToGeocentric_WGS84(target, p_geocentric_direct);
+
+  EXPECT_NEAR(p_geocentric_via_pose.x, p_geocentric_direct.x, 1e-6);
+  EXPECT_NEAR(p_geocentric_via_pose.y, p_geocentric_direct.y, 1e-6);
+  EXPECT_NEAR(p_geocentric_via_pose.z, p_geocentric_direct.z, 1e-6);
+}
+
+TEST(TopographyConversion, ENU_axes_from_WGS84_OnlyAnglesZeroesTranslation)
+{
+  TPose3D enu_axes;
+  ENU_axes_from_WGS84(TGeodeticCoords(36.7, -4.5, 100.0), enu_axes, true);
+  EXPECT_DOUBLE_EQ(enu_axes.x, 0.0);
+  EXPECT_DOUBLE_EQ(enu_axes.y, 0.0);
+  EXPECT_DOUBLE_EQ(enu_axes.z, 0.0);
+}
+
+TEST(TopographyConversion, ENUToGeocentric_IsInverseOfGeodeticToENU)
+{
+  // Regression test: ENUToGeocentric() must use the same ellipsoid-normal
+  // "Up" convention as geodeticToENU_WGS84()/geocentricToENU_WGS84(), so
+  // that they form an exact forward/inverse pair.
+  const TGeodeticCoords ref(36.714459075, -4.4789588283333330, 38.8887);
+  const TGeodeticCoords target(36.716411055, -4.475828390, 48.243);
+
+  TPoint3D p_enu;
+  geodeticToENU_WGS84(target, p_enu, ref);
+
+  TGeocentricCoords p_geo_roundtrip;
+  ENUToGeocentric(p_enu, ref, p_geo_roundtrip, TEllipsoid::Ellipsoid_WGS84());
+
+  TPoint3D p_geocentric_direct;
+  geodeticToGeocentric_WGS84(target, p_geocentric_direct);
+
+  EXPECT_NEAR(p_geo_roundtrip.x, p_geocentric_direct.x, 1e-3);
+  EXPECT_NEAR(p_geo_roundtrip.y, p_geocentric_direct.y, 1e-3);
+  EXPECT_NEAR(p_geo_roundtrip.z, p_geocentric_direct.z, 1e-3);
+}
+
+TEST(TopographyConversion, ENUToGeocentric_OriginMapsToReferencePoint)
+{
+  const TGeodeticCoords ref(10.0, 20.0, 50.0);
+  TPoint3D p_geocentric_ref;
+  geodeticToGeocentric_WGS84(ref, p_geocentric_ref);
+
+  TGeocentricCoords out;
+  ENUToGeocentric(TPoint3D(0, 0, 0), ref, out, TEllipsoid::Ellipsoid_WGS84());
+
+  EXPECT_NEAR(out.x, p_geocentric_ref.x, 1e-3);
+  EXPECT_NEAR(out.y, p_geocentric_ref.y, 1e-3);
+  EXPECT_NEAR(out.z, p_geocentric_ref.z, 1e-3);
+}
+
+TEST(TopographyConversion, ENUToGeodetic_IsInverseOfGeodeticToENU)
+{
+  const std::vector<TGeodeticCoords> refs = {
+      TGeodeticCoords(36.714459075, -4.4789588283333330, 38.8887),
+      TGeodeticCoords(-33.9, 151.2, 5.0), TGeodeticCoords(56.0, 10.0, 120.0),
+      TGeodeticCoords(0.0, -78.5, 2800.0), TGeodeticCoords(78.2, 15.6, 0.0)};
+  const std::vector<TPoint3D> enu_offsets = {
+      TPoint3D(8.0, 3.0, -1.5), TPoint3D(-350.0, 220.0, 12.0), TPoint3D(4000.0, -2500.0, 80.0)};
+
+  for (const auto& ref : refs)
+  {
+    for (const auto& enu : enu_offsets)
+    {
+      TGeodeticCoords target;
+      ENUToGeodetic_WGS84(enu, target, ref);
+
+      // Converting back must recover the original ENU point:
+      TPoint3D enu_back;
+      geodeticToENU_WGS84(target, enu_back, ref);
+
+      EXPECT_NEAR(enu_back.x, enu.x, 1e-4);
+      EXPECT_NEAR(enu_back.y, enu.y, 1e-4);
+      EXPECT_NEAR(enu_back.z, enu.z, 1e-4);
+    }
+  }
+}
+
+TEST(TopographyConversion, ENUToGeodetic_GeodeticRoundTrip)
+{
+  const TGeodeticCoords ref(36.714459075, -4.4789588283333330, 38.8887);
+  const TGeodeticCoords target(36.716411055, -4.475828390, 48.243);
+
+  TPoint3D p_enu;
+  geodeticToENU_WGS84(target, p_enu, ref);
+
+  TGeodeticCoords target_back;
+  ENUToGeodetic_WGS84(p_enu, target_back, ref);
+
+  EXPECT_NEAR(target_back.lat, target.lat, 1e-9);
+  EXPECT_NEAR(target_back.lon, target.lon, 1e-9);
+  EXPECT_NEAR(target_back.height, target.height, 1e-4);
+}
+
+TEST(TopographyConversion, ENUToGeodetic_OriginMapsToReference)
+{
+  const TGeodeticCoords ref(-12.5, 130.8, 25.0);
+
+  TGeodeticCoords out;
+  ENUToGeodetic_WGS84(TPoint3D(0, 0, 0), out, ref);
+
+  EXPECT_NEAR(out.lat, ref.lat, 1e-9);
+  EXPECT_NEAR(out.lon, ref.lon, 1e-9);
+  EXPECT_NEAR(out.height, ref.height, 1e-4);
+}
+
+TEST(TopographyConversion, ENUToGeodetic_UpIsEllipsoidNormal)
+{
+  // A pure "Up" displacement must only change the geodetic height. A
+  // geocentric-radial "Up" would also shift the latitude.
+  const TGeodeticCoords ref(45.0, -3.0, 100.0);
+  const double dz = 1000.0;
+
+  TGeodeticCoords out;
+  ENUToGeodetic_WGS84(TPoint3D(0, 0, dz), out, ref);
+
+  EXPECT_NEAR(out.lat, ref.lat, 1e-9);
+  EXPECT_NEAR(out.lon, ref.lon, 1e-9);
+  EXPECT_NEAR(out.height, ref.height + dz, 1e-4);
+}
+
+TEST(TopographyConversion, GeodeticToGeocentric_UsesGivenEllipsoidOnEveryCall)
+{
+  // Alternating ellipsoids must not reuse values from a previous call.
+  const TGeodeticCoords c(40.0, -3.7, 650.0);
+  const auto other = TEllipsoid::Ellipsoid_Walbeck_1817();
+  const auto wgs84 = TEllipsoid::Ellipsoid_WGS84();
+
+  for (int i = 0; i < 2; i++)
+  {
+    TGeocentricCoords p_other;
+    geodeticToGeocentric(c, p_other, other);
+    TGeodeticCoords c_other;
+    geocentricToGeodetic(p_other, c_other, other);
+    EXPECT_NEAR(c_other.lat, c.lat, 1e-8);
+    EXPECT_NEAR(c_other.lon, c.lon, 1e-8);
+    EXPECT_NEAR(c_other.height, c.height, 1e-4);
+
+    TGeocentricCoords p_wgs84;
+    geodeticToGeocentric(c, p_wgs84, wgs84);
+    TPoint3D p_wgs84_ref;
+    geodeticToGeocentric_WGS84(c, p_wgs84_ref);
+    EXPECT_NEAR(p_wgs84.x, p_wgs84_ref.x, 1e-3);
+    EXPECT_NEAR(p_wgs84.y, p_wgs84_ref.y, 1e-3);
+    EXPECT_NEAR(p_wgs84.z, p_wgs84_ref.z, 1e-3);
+
+    // Both ellipsoids are different enough to tell them apart:
+    EXPECT_GT((p_other - p_wgs84).norm(), 100.0);
+  }
+}
+
+TEST(TopographyConversion, RegisterAllClasses)
+{
+  // Trivial smoke-test to make sure this function can be invoked without
+  // errors (it is normally only needed for static-library builds).
+  EXPECT_NO_THROW(mrpt::topography::registerAllClasses_mrpt_topography());
 }
