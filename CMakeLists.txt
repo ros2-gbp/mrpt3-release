@@ -9,6 +9,8 @@ find_package(mrpt_viz REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PkgConfig QUIET)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 # Optional dependency detection scripts:
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/script_ffmpeg.cmake REQUIRED)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/script_flycapture2.cmake REQUIRED)
@@ -145,8 +147,27 @@ set(LIB_SOURCES
 )
 
 set(LIB_UNIT_TEST_SOURCES
+  tests/C2DRangeFinderAbstract_unittest.cpp
+  tests/CGPSInterface_stream_unittest.cpp
+  tests/CGenericSensor_unittest.cpp
+  tests/CGillAnemometer_unittest.cpp
   tests/CGPSInterface_unittest.cpp
+  tests/CHokuyoURG_unittest.cpp
+  tests/CIbeoLuxETH_unittest.cpp
+  tests/CImpinjRFID_unittest.cpp
+  tests/CCANBusReader_unittest.cpp
+  tests/CGyroKVHDSP3000_unittest.cpp
+  tests/CLMS100Eth_unittest.cpp
+  tests/CTaoboticsIMU_unittest.cpp
+  tests/CRaePID_unittest.cpp
+  tests/CNTRIPClient_unittest.cpp
+  tests/CSICKTim561Eth_unittest.cpp
+  tests/CSickLaserSerial_unittest.cpp
   tests/CVelodyneScanner_unittest.cpp
+  tests/fake_tcp_device.h
+  tests/sick_telegrams.h
+  tests/mock_stream.h
+  tests/pty_device.h
 )
 
 set(LIB_PUBLIC_HEADERS
@@ -341,3 +362,12 @@ endif()
 if (MINGW)
 	target_link_libraries(${PROJECT_NAME} PRIVATE WS2_32 winmm)
 endif()
+
+# Python bindings
+mrpt_add_python_module(hwdrivers
+  python_bindings/${PROJECT_NAME}_py.cpp
+)
+
+mrpt_add_python_binding_test(hwdrivers
+  SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/tests/python_hwdrivers_test.py
+)

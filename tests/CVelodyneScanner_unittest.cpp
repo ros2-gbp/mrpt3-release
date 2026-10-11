@@ -22,6 +22,7 @@ using namespace mrpt::hwdrivers;
 using namespace std;
 
 #include <mrpt/hwdrivers/config.h>
+#include <mrpt/obs/config.h>  // MRPT_HAS_TINYXML2
 #if MRPT_HAS_LIBPCAP && MRPT_HAS_TINYXML2
 
 TEST(CVelodyneScanner, sample_vlp16_dataset)
@@ -30,8 +31,7 @@ TEST(CVelodyneScanner, sample_vlp16_dataset)
 
   if (!mrpt::system::fileExists(fil))
   {
-    std::cerr << "WARNING: Skipping test due to missing file: " << fil << "\n";
-    return;
+    GTEST_SKIP() << "Missing test data file: " << fil;
   }
 
   CVelodyneScanner velodyne;
@@ -68,8 +68,7 @@ TEST(CVelodyneScanner, sample_hdl32_dataset)
 
   if (!mrpt::system::fileExists(fil))
   {
-    std::cerr << "WARNING: Skipping test due to missing file: " << fil << "\n";
-    return;
+    GTEST_SKIP() << "Missing test data file: " << fil;
   }
 
   CVelodyneScanner velodyne;
