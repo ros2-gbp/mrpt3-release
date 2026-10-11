@@ -116,8 +116,11 @@ void CGraphSlamEngine<GRAPH_T>::initClass()
     MRPT_LOG_INFO_STREAM("Verifying support for given MRPT graph class...");
 
     // TODO - initialize vector in a smarter way.
-    m_supported_constraint_types.push_back("CPosePDFGaussianInf");
-    m_supported_constraint_types.push_back("CPose3DPDFGaussianInf");
+    // NOTE: GetRuntimeClass()->className returns the fully-qualified,
+    // namespace-prefixed name (e.g. "mrpt::poses::CPosePDFGaussianInf"), so
+    // the whitelist must match that format too.
+    m_supported_constraint_types.push_back("mrpt::poses::CPosePDFGaussianInf");
+    m_supported_constraint_types.push_back("mrpt::poses::CPose3DPDFGaussianInf");
 
     constraint_t c;
     const string c_str(c.GetRuntimeClass()->className);
@@ -426,20 +429,26 @@ void CGraphSlamEngine<GRAPH_T>::initClass()
 
   // In case we are given an RGBD TUM Dataset - try and read the info file so
   // that we know how to play back the GT poses.
-  try
+  // This only applies when a .rawlog file is actually given (e.g. the
+  // standalone graphslam-engine CLI); skip it otherwise (e.g. the ROS 2
+  // wrapper, which always feeds sensor data via topics).
+  if (!m_rawlog_fname.empty())
   {
-    m_info_params.setRawlogFile(m_rawlog_fname);
-    m_info_params.parseFile();
-    // set the rate at which we read from the GT poses vector
-    int num_of_objects = std::atoi(m_info_params.fields["Overall number of objects"].c_str());
-    m_GT_poses_step = m_GT_poses.size() / num_of_objects;
+    try
+    {
+      m_info_params.setRawlogFile(m_rawlog_fname);
+      m_info_params.parseFile();
+      // set the rate at which we read from the GT poses vector
+      int num_of_objects = std::atoi(m_info_params.fields["Overall number of objects"].c_str());
+      m_GT_poses_step = m_GT_poses.size() / num_of_objects;
 
-    MRPT_LOG_INFO_STREAM("Overall number of objects in rawlog: " << num_of_objects);
-    MRPT_LOG_INFO_STREAM("Setting the Ground truth read step to: " << m_GT_poses_step);
-  }
-  catch (const std::exception& e)
-  {
-    MRPT_LOG_INFO_STREAM("RGBD_TUM info file was not found: " << e.what());
+      MRPT_LOG_INFO_STREAM("Overall number of objects in rawlog: " << num_of_objects);
+      MRPT_LOG_INFO_STREAM("Setting the Ground truth read step to: " << m_GT_poses_step);
+    }
+    catch (const std::exception& e)
+    {
+      MRPT_LOG_INFO_STREAM("RGBD_TUM info file was not found: " << e.what());
+    }
   }
 
   // SLAM evaluation metric
@@ -717,7 +726,7 @@ bool CGraphSlamEngine<GRAPH_T>::_execGraphSlamStep(
     {
       m_win_manager->addTextMessage(
           m_offset_x_left, -m_offset_y_timestamp,
-          format("Simulated time: %s", timeToString(m_curr_timestamp).c_str()),
+          mrpt::format("Simulated time: %s", timeToString(m_curr_timestamp).c_str()),
           mrpt::img::TColorf(1.0, 1.0, 1.0),
           /* unique_index = */ m_text_index_timestamp);
     }
@@ -725,7 +734,7 @@ bool CGraphSlamEngine<GRAPH_T>::_execGraphSlamStep(
     {
       m_win_manager->addTextMessage(
           m_offset_x_left, -m_offset_y_timestamp,
-          format("Wall time: %s", timeToString(mrpt::Clock::now()).c_str()),
+          mrpt::format("Wall time: %s", timeToString(mrpt::Clock::now()).c_str()),
           mrpt::img::TColorf(1.0, 1.0, 1.0),
           /* unique_index = */ m_text_index_timestamp);
     }
@@ -831,7 +840,7 @@ void CGraphSlamEngine<GRAPH_T>::monitorNodeRegistration(
   {  // just check that it's the same.
     ASSERTDEBMSG_(
         listed_nodeCount == m_graph.nodeCount(),
-        format(
+        mrpt::format(
             "listed_nodeCount [%lu] != nodeCount() [%lu]",
             static_cast<unsigned long>(listed_nodeCount),
             static_cast<unsigned long>(m_graph.nodeCount())));
@@ -844,7 +853,7 @@ void CGraphSlamEngine<GRAPH_T>::monitorNodeRegistration(
           class_name << " illegally added new nodes to the graph "
                      << ", wanted to see [" << listed_nodeCount << "] but saw ["
                      << m_graph.nodeCount() << "]");
-      THROW_EXCEPTION(format("Illegal node registration by %s.", class_name.c_str()));
+      THROW_EXCEPTION(mrpt::format("Illegal node registration by %s.", class_name.c_str()));
     }
   }
   MRPT_END
@@ -927,7 +936,7 @@ void CGraphSlamEngine<GRAPH_T>::computeMap() const
       const mrpt::obs::CObservation2DRangeScan::Ptr& curr_laser_scan = it->second;
       ASSERTDEBMSG_(
           curr_laser_scan,
-          format(
+          mrpt::format(
               "LaserScan of nodeID: %lu is not present.", static_cast<unsigned long>(curr_node)));
 
       // Fetch pose at which to display the LaserScan
@@ -1298,7 +1307,7 @@ void CGraphSlamEngine<GRAPH_T>::readGTFile(
 
   // make sure file exists
   ASSERTDEBMSG_(
-      fileExists(fname_GT), format(
+      fileExists(fname_GT), mrpt::format(
                                 "\nGround-truth file %s was not found.\n"
                                 "Either specify a valid ground-truth filename or set set the "
                                 "m_visualize_GT flag to false\n",
@@ -1364,7 +1373,7 @@ void CGraphSlamEngine<GRAPH_T>::readGTFileRGBD_TUM(
 
   // make sure file exists
   ASSERTDEBMSG_(
-      fileExists(fname_GT), format(
+      fileExists(fname_GT), mrpt::format(
                                 "\nGround-truth file %s was not found.\n"
                                 "Either specify a valid ground-truth filename or set set the "
                                 "m_visualize_GT flag to false\n",
@@ -2559,7 +2568,7 @@ void CGraphSlamEngine<GRAPH_T>::generateReportFiles(const std::string& output_di
 
   ASSERTDEBMSG_(
       directoryExists(output_dir_fname),
-      format("Output directory \"%s\" doesn't exist", output_dir_fname.c_str()));
+      mrpt::format("Output directory \"%s\" doesn't exist", output_dir_fname.c_str()));
 
   MRPT_LOG_INFO_STREAM("Generating detailed class report...");
   std::lock_guard<std::mutex> graph_lock(m_graph_section);
