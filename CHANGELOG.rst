@@ -2,6 +2,73 @@
 Changelog for package mrpt_containers
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.5.2 (2026-10-11)
+------------------
+* yaml: emit a key's right comment after the value, not before its ':'
+  (`#1462 <https://github.com/MRPT/mrpt/issues/1462>`_)
+* Contributors: Jose Luis Blanco-Claraco
+
+3.5.1 (2026-10-09)
+------------------
+
+3.5.0 (2026-10-07)
+------------------
+* Python bindings: docstrings for all members, regenerated .pyi stubs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.4.0 (2026-10-04)
+------------------
+* Python: commit generated .pyi type stubs for all modules
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.1 (2026-09-29)
+------------------
+* Fix ROS build farm builds on Fedora and RHEL: drop build deps without a rosdep rule.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.3.0 (2026-09-26)
+------------------
+* fix: qualify mrpt::format() calls to avoid ambiguity with std::format
+* Python bindings: datasets, maps, localization, sensors (+ fixes) (`#1429 <https://github.com/MRPT/mrpt/issues/1429>`_)
+* fix: test crashes on arm64 and armhf (`#1428 <https://github.com/MRPT/mrpt/issues/1428>`_)
+* changelogs
+* Contributors: Jose Luis Blanco-Claraco
+
+3.2.0 (2026-09-16)
+------------------
+* feat: API cleanup pass for archive handling, const-correctness, and points-map accessors before the next minor bump.
+* feat(mrpt_obs,mrpt_viz,mrpt_maps): enforce deep const-correctness in smart-pointer containers and return ConstPtr from const iteration paths.
+* fix: resolve ROS/GCC buildfarm warnings across the affected packages and fix the real correctness issues they exposed.
+* fix: replace the Clock::time_point stream overload with a gtest PrintTo hook to avoid ambiguous overload resolution.
+* fix: tighten enum underlying types and other warning-driven fixes for safer, more portable builds.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.4 (2026-09-04)
+------------------
+* fix(mrpt_containers): yaml double round-trip precision loss, %.16g -> %.17g (`#1396 <https://github.com/MRPT/mrpt/issues/1396>`_).
+* fix(mrpt_containers): yaml_ref/yaml_cref: add missing asSequenceRange() and yaml_cref::getOrDefault() (`#1397 <https://github.com/MRPT/mrpt/issues/1397>`_, `#1398 <https://github.com/MRPT/mrpt/issues/1398>`_).
+* fix(mrpt_containers): yaml: fix a TOP comment corrupting the document on serialize+reparse (`#1400 <https://github.com/MRPT/mrpt/issues/1400>`_).
+* fix(mrpt_containers): yaml: keep an unquoted leading-zero digit run (e.g. "00") as a string instead of parsing it as a number (`#1401 <https://github.com/MRPT/mrpt/issues/1401>`_).
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.3 (2026-08-12)
+------------------
+* test(mrpt_maps): raise unit test coverage for occupancy grids and maps. Fix out-of-bounds reads in CDynamicGrid3D and invert check in computeObservationLikelihood_ConsensusOWA().
+* fix(mrpt_containers): guard ts_hash_map self-assignment; extend tests.
+* perf(mrpt_system): minimize CTimeLogger enter()/leave() overhead.
+* fix(mrpt_system): make CTimeLogger reporting thread-safe vs. concurrent logging.
+* test(mrpt_containers): raise unit-test coverage for dynamic grids, circular buffers, ts_hash_map, and YAML.
+* Contributors: Jose Luis Blanco-Claraco
+
+3.1.2 (2026-07-07)
+------------------
+
+3.1.1 (2026-07-04)
+------------------
+
+3.1.0 (2026-07-03)
+------------------
+
 3.0.4 (2026-06-17)
 ------------------
 
