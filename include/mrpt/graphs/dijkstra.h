@@ -251,28 +251,38 @@ class CDijkstra
         }
       }
 
-      if (min_d > maximum_distance)
-      {
-        // We are out of the topological region of interest, skip the
-        // rest of the graph:
-        break;
-      }
-
       // make sure we have found the next nodeID from the available
       // non-visited distances
       if (u == INVALID_NODEID)
       {
-        std::set<TNodeID> nodeIDs_unconnected;
-
-        // for all the nodes in the graph
-        for (auto nId : m_lstNode_IDs)
+        if (maximum_distance == std::numeric_limits<size_t>::max())
         {
-          // have I already visited this node in Dijkstra?
-          if (m_distances.count(nId) == 0) nodeIDs_unconnected.insert(nId);
+          // No search radius was requested, so running out of
+          // candidates while nodes remain unvisited means the graph is
+          // genuinely disconnected:
+          std::set<TNodeID> nodeIDs_unconnected;
+
+          // for all the nodes in the graph
+          for (auto nId : m_lstNode_IDs)
+          {
+            // have I already visited this node in Dijkstra?
+            if (m_distances.count(nId) == 0) nodeIDs_unconnected.insert(nId);
+          }
+
+          std::string err_str = "Graph is not fully connected!";
+          throw mrpt::graphs::detail::NotConnectedGraph(nodeIDs_unconnected, err_str);
         }
 
-        std::string err_str = "Graph is not fully connected!";
-        throw mrpt::graphs::detail::NotConnectedGraph(nodeIDs_unconnected, err_str);
+        // Otherwise, we simply ran out of candidates within the
+        // requested search radius:
+        break;
+      }
+
+      if (min_d > static_cast<double>(maximum_distance))
+      {
+        // We are out of the topological region of interest, skip the
+        // rest of the graph:
+        break;
       }
 
       // Update distance (for possible future reference...) and remove
@@ -317,7 +327,7 @@ class CDijkstra
 
         const auto dist_ui = (min_d + edge_ui_weight);
 
-        if (dist_ui > maximum_distance)  // out of radius of interest:
+        if (dist_ui > static_cast<double>(maximum_distance))  // out of radius of interest:
           continue;
 
         if (dist_ui < m_distances[i].dist)
@@ -455,7 +465,7 @@ class CDijkstra
       auto itEdgeData = m_cached_graph.edges.find(std::make_pair(id_from, id_to));
       ASSERTMSG_(
           itEdgeData != m_cached_graph.edges.end(),
-          format(
+          mrpt::format(
               "Edge %u->%u is in Dijkstra paths but not in original "
               "graph!",
               static_cast<unsigned int>(id_from), static_cast<unsigned int>(id_to)));
