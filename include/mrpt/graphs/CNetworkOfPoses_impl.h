@@ -21,7 +21,6 @@
 #include <mrpt/math/TPose3D.h>
 #include <mrpt/math/TPose3DQuat.h>
 #include <mrpt/math/matrix_serialization.h>
-#include <mrpt/math/ops_matrices.h>  // multiply_*()
 #include <mrpt/math/wrap2pi.h>
 #include <mrpt/poses/CPose2D.h>
 #include <mrpt/poses/CPose3D.h>
@@ -248,21 +247,21 @@ struct graph_ops
     istringstream s;
     while (filParser.getNextLine(s))
     {
-      const unsigned int lineNum = filParser.getCurrentLineNumber();
+      const unsigned int lineNum = static_cast<unsigned int>(filParser.getCurrentLineNumber());
       const string lin = s.str();
 
       string key;
       if (!(s >> key) || key.empty())
-        THROW_EXCEPTION(
-            format("Line %u: Can't read string for entry type in: '%s'", lineNum, lin.c_str()));
+        THROW_EXCEPTION(mrpt::format(
+            "Line %u: Can't read string for entry type in: '%s'", lineNum, lin.c_str()));
 
       if (mrpt::system::strCmpI(key, "EQUIV"))
       {
         // Process these ones at the end, for now store in a list:
         TNodeID id1, id2;
         if (!(s >> id1 >> id2))
-          THROW_EXCEPTION(
-              format("Line %u: Can't read id1 & id2 in EQUIV line: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(mrpt::format(
+              "Line %u: Can't read id1 & id2 in EQUIV line: '%s'", lineNum, lin.c_str()));
         lstEquivs[std::max(id1, id2)] = std::min(id1, id2);
       }
     }  // end 1st pass
@@ -275,7 +274,7 @@ struct graph_ops
     // Read & process lines each at once until EOF:
     while (filParser.getNextLine(s))
     {
-      const unsigned int lineNum = filParser.getCurrentLineNumber();
+      const unsigned int lineNum = static_cast<unsigned int>(filParser.getCurrentLineNumber());
       const string lin = s.str();
 
       // Recognized strings:
@@ -293,8 +292,8 @@ struct graph_ops
       //  EQUIV id1 id2
       string key;
       if (!(s >> key) || key.empty())
-        THROW_EXCEPTION(
-            format("Line %u: Can't read string for entry type in: '%s'", lineNum, lin.c_str()));
+        THROW_EXCEPTION(mrpt::format(
+            "Line %u: Can't read string for entry type in: '%s'", lineNum, lin.c_str()));
 
       if (strCmpI(key, "VERTEX2") || strCmpI(key, "VERTEX") || strCmpI(key, "VERTEX_SE2"))
       {
@@ -302,11 +301,11 @@ struct graph_ops
         TPose2D p2D;
         if (!(s >> id >> p2D.x >> p2D.y >> p2D.phi))
           THROW_EXCEPTION(
-              format("Line %u: Error parsing VERTEX2 line: '%s'", lineNum, lin.c_str()));
+              mrpt::format("Line %u: Error parsing VERTEX2 line: '%s'", lineNum, lin.c_str()));
 
         // Make sure the node is new:
         if (g->nodes.find(id) != g->nodes.end())
-          THROW_EXCEPTION(format(
+          THROW_EXCEPTION(mrpt::format(
               "Line %u: Error, duplicated verted ID %u in line: "
               "'%s'",
               lineNum, static_cast<unsigned int>(id), lin.c_str()));
@@ -328,7 +327,7 @@ struct graph_ops
       else if (strCmpI(key, "VERTEX3"))
       {
         if (!graph_is_3D)
-          THROW_EXCEPTION(format(
+          THROW_EXCEPTION(mrpt::format(
               "Line %u: Try to load VERTEX3 into a 2D graph: "
               "'%s'",
               lineNum, lin.c_str()));
@@ -340,11 +339,11 @@ struct graph_ops
         // order vs. MRPT's YPR.
         if (!(s >> id >> p3D.x >> p3D.y >> p3D.z >> p3D.roll >> p3D.pitch >> p3D.yaw))
           THROW_EXCEPTION(
-              format("Line %u: Error parsing VERTEX3 line: '%s'", lineNum, lin.c_str()));
+              mrpt::format("Line %u: Error parsing VERTEX3 line: '%s'", lineNum, lin.c_str()));
 
         // Make sure the node is new:
         if (g->nodes.find(id) != g->nodes.end())
-          THROW_EXCEPTION(format(
+          THROW_EXCEPTION(mrpt::format(
               "Line %u: Error, duplicated verted ID %u in line: "
               "'%s'",
               lineNum, static_cast<unsigned int>(id), lin.c_str()));
@@ -365,7 +364,7 @@ struct graph_ops
       else if (strCmpI(key, "VERTEX_SE3:QUAT"))
       {
         if (!graph_is_3D)
-          THROW_EXCEPTION(format(
+          THROW_EXCEPTION(mrpt::format(
               "Line %u: Try to load VERTEX_SE3:QUAT into a 2D "
               "graph: '%s'",
               lineNum, lin.c_str()));
@@ -374,12 +373,12 @@ struct graph_ops
         TNodeID id;
         TPose3DQuat p3D;
         if (!(s >> id >> p3D.x >> p3D.y >> p3D.z >> p3D.qx >> p3D.qy >> p3D.qz >> p3D.qr))
-          THROW_EXCEPTION(
-              format("Line %u: Error parsing VERTEX_SE3:QUAT line: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(mrpt::format(
+              "Line %u: Error parsing VERTEX_SE3:QUAT line: '%s'", lineNum, lin.c_str()));
 
         // Make sure the node is new:
         if (g->nodes.find(id) != g->nodes.end())
-          THROW_EXCEPTION(format(
+          THROW_EXCEPTION(mrpt::format(
               "Line %u: Error, duplicated verted ID %u in line: "
               "'%s'",
               lineNum, static_cast<unsigned int>(id), lin.c_str()));
@@ -410,7 +409,8 @@ struct graph_ops
         //
         TNodeID to_id, from_id;
         if (!(s >> from_id >> to_id))
-          THROW_EXCEPTION(format("Line %u: Error parsing EDGE2 line: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(
+              mrpt::format("Line %u: Error parsing EDGE2 line: '%s'", lineNum, lin.c_str()));
 
         // EQUIV? Replace ID by new one.
         {
@@ -431,7 +431,7 @@ struct graph_ops
                 Ap_cov_inv(0, 1) >> Ap_cov_inv(0, 2) >> Ap_cov_inv(1, 1) >> Ap_cov_inv(1, 2) >>
                 Ap_cov_inv(2, 2)))
             THROW_EXCEPTION(
-                format("Line %u: Error parsing EDGE2 line: '%s'", lineNum, lin.c_str()));
+                mrpt::format("Line %u: Error parsing EDGE2 line: '%s'", lineNum, lin.c_str()));
 
           // Complete low triangular part of inf matrix:
           Ap_cov_inv(1, 0) = Ap_cov_inv(0, 1);
@@ -448,14 +448,15 @@ struct graph_ops
       else if (strCmpI(key, "EDGE3"))
       {
         if (!graph_is_3D)
-          THROW_EXCEPTION(
-              format("Line %u: Try to load EDGE3 into a 2D graph: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(mrpt::format(
+              "Line %u: Try to load EDGE3 into a 2D graph: '%s'", lineNum, lin.c_str()));
 
         //  EDGE3 from_id to_id Ax Ay Az Aroll Apitch Ayaw inf_11 inf_12
         //  .. inf_16 inf_22 .. inf_66
         TNodeID to_id, from_id;
         if (!(s >> from_id >> to_id))
-          THROW_EXCEPTION(format("Line %u: Error parsing EDGE3 line: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(
+              mrpt::format("Line %u: Error parsing EDGE3 line: '%s'", lineNum, lin.c_str()));
 
         // EQUIV? Replace ID by new one.
         {
@@ -477,7 +478,7 @@ struct graph_ops
           if (!(s >> Ap_mean.x >> Ap_mean.y >> Ap_mean.z >> Ap_mean.roll >> Ap_mean.pitch >>
                 Ap_mean.yaw))
             THROW_EXCEPTION(
-                format("Line %u: Error parsing EDGE3 line: '%s'", lineNum, lin.c_str()));
+                mrpt::format("Line %u: Error parsing EDGE3 line: '%s'", lineNum, lin.c_str()));
 
           // **CAUTION** Indices are shuffled to the change YAW(3) <->
           // ROLL(5) in the order of the data.
@@ -516,8 +517,8 @@ struct graph_ops
       else if (strCmpI(key, "EDGE_SE3:QUAT"))
       {
         if (!graph_is_3D)
-          THROW_EXCEPTION(
-              format("Line %u: Try to load EDGE3 into a 2D graph: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(mrpt::format(
+              "Line %u: Try to load EDGE3 into a 2D graph: '%s'", lineNum, lin.c_str()));
 
         //  EDGE_SE3:QUAT from_id to_id Ax Ay Az qx qy qz qw inf_11
         //  inf_12 .. inf_16 inf_22 .. inf_66
@@ -525,8 +526,8 @@ struct graph_ops
         //  .. inf_16 inf_22 .. inf_66
         TNodeID to_id, from_id;
         if (!(s >> from_id >> to_id))
-          THROW_EXCEPTION(
-              format("Line %u: Error parsing EDGE_SE3:QUAT line: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(mrpt::format(
+              "Line %u: Error parsing EDGE_SE3:QUAT line: '%s'", lineNum, lin.c_str()));
 
         // EQUIV? Replace ID by new one.
         {
@@ -545,7 +546,7 @@ struct graph_ops
           mrpt::math::CMatrixDouble66 Ap_cov_inv;
           if (!(s >> Ap_mean.x >> Ap_mean.y >> Ap_mean.z >> Ap_mean.qx >> Ap_mean.qy >>
                 Ap_mean.qz >> Ap_mean.qr))
-            THROW_EXCEPTION(format(
+            THROW_EXCEPTION(mrpt::format(
                 "Line %u: Error parsing EDGE_SE3:QUAT line: "
                 "'%s'",
                 lineNum, lin.c_str()));
@@ -592,7 +593,8 @@ struct graph_ops
       {
         TNodeID id;
         if (!(s >> id))
-          THROW_EXCEPTION(format("Line %u: Can't read id in FIX line: '%s'", lineNum, lin.c_str()));
+          THROW_EXCEPTION(
+              mrpt::format("Line %u: Can't read id in FIX line: '%s'", lineNum, lin.c_str()));
         g->root = id;
       }
       else
@@ -735,7 +737,9 @@ struct graph_ops
     //
     // Keep track of the NODE_ANNOTATIONS for each node and put it after
     // the global pose computation
-    bool empty_node_annots = g->nodes.begin()->second.is_node_annots_empty;
+    // A graph may have edges but no node poses yet:
+    const bool empty_node_annots =
+        g->nodes.empty() || g->nodes.begin()->second.is_node_annots_empty;
     map<const TNodeID, TNodeAnnotations*> nodeID_to_annots;
     if (!empty_node_annots)
     {
@@ -781,11 +785,26 @@ struct graph_ops
   }  // end of graph_of_poses_dijkstra_init
 
   // Auxiliary funcs:
+  /** Returns v^t * M * v. Implemented without Eigen, so this header can be
+   * used without Eigen in the include path. */
+  template <class VEC, class MAT>
+  static double quadraticForm(const VEC& v, const MAT& M)
+  {
+    double r = 0;
+    for (int i = 0; i < static_cast<int>(M.rows()); i++)
+    {
+      for (int j = 0; j < static_cast<int>(M.cols()); j++)
+      {
+        r += v[i] * M(i, j) * v[j];
+      }
+    }
+    return r;
+  }
   template <class VEC>
   static double auxMaha2Dist(VEC& err, const CPosePDFGaussianInf& p)
   {
     math::wrapToPiInPlace(err[2]);
-    return mrpt::math::multiply_HtCH_scalar(err, p.cov_inv);
+    return quadraticForm(err, p.cov_inv);
   }
   template <class VEC>
   static double auxMaha2Dist(VEC& err, const CPose3DPDFGaussianInf& p)
@@ -793,14 +812,14 @@ struct graph_ops
     math::wrapToPiInPlace(err[3]);
     math::wrapToPiInPlace(err[4]);
     math::wrapToPiInPlace(err[5]);
-    return mrpt::math::multiply_HtCH_scalar(err, p.cov_inv);
+    return quadraticForm(err, p.cov_inv);
   }
   template <class VEC>
   static double auxMaha2Dist(VEC& err, const CPosePDFGaussian& p)
   {
     math::wrapToPiInPlace(err[2]);
     // err^t*cov_inv*err
-    return mrpt::math::multiply_HCHt_scalar(err, p.cov.inverse_LLt());
+    return quadraticForm(err, p.cov.inverse_LLt());
   }
   template <class VEC>
   static double auxMaha2Dist(VEC& err, const CPose3DPDFGaussian& p)
@@ -809,18 +828,18 @@ struct graph_ops
     math::wrapToPiInPlace(err[4]);
     math::wrapToPiInPlace(err[5]);
     // err^t*cov_inv*err
-    return mrpt::math::multiply_HtCH_scalar(err, p.cov.inverse_LLt());
+    return quadraticForm(err, p.cov.inverse_LLt());
   }
   // These two are for simulating maha2 distances for non-PDF types: fallback
   // to squared-norm:
   template <class VEC>
-  static double auxMaha2Dist(VEC& err, const mrpt::poses::CPose2D& p)
+  static double auxMaha2Dist(VEC& err, const mrpt::poses::CPose2D& /*p*/)
   {
     math::wrapToPiInPlace(err[2]);
     return square(err[0]) + square(err[1]) + square(err[2]);
   }
   template <class VEC>
-  static double auxMaha2Dist(VEC& err, const mrpt::poses::CPose3D& p)
+  static double auxMaha2Dist(VEC& err, const mrpt::poses::CPose3D& /*p*/)
   {
     math::wrapToPiInPlace(err[3]);
     math::wrapToPiInPlace(err[4]);
@@ -865,11 +884,12 @@ struct graph_ops
     auto itPoseTo = g->nodes.find(to_id);
     ASSERTMSG_(
         itPoseFrom != g->nodes.end(),
-        format(
+        mrpt::format(
             "Node %u doesn't have a global pose in 'nodes'.", static_cast<unsigned int>(from_id)));
     ASSERTMSG_(
         itPoseTo != g->nodes.end(),
-        format("Node %u doesn't have a global pose in 'nodes'.", static_cast<unsigned int>(to_id)));
+        mrpt::format(
+            "Node %u doesn't have a global pose in 'nodes'.", static_cast<unsigned int>(to_id)));
 
     // The global poses:
     using constraint_t = typename graph_t::constraint_t;
@@ -905,7 +925,8 @@ struct graph_ops
       //
       mrpt::math::CVectorFixedDouble<constraint_t::type_value::static_size> err;
       for (size_t i = 0; i < constraint_t::type_value::static_size; i++)
-        err[i] = from_plus_delta.getPoseMean()[i] - to_mean[i];
+        err[i] = from_plus_delta.getPoseMean()[static_cast<unsigned int>(i)] -
+                 to_mean[static_cast<unsigned int>(i)];
 
       // (auxMaha2Dist will also take into account the 2PI wrapping)
       return auxMaha2Dist(err, from_plus_delta);
