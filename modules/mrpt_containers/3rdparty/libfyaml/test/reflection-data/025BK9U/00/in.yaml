@@ -1,6 +1,0 @@
-foo_value: 10
-bar:
-  bar_value: 100
-  foo:
-    foo_value: 11
-    bar: NULL
