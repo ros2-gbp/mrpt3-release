@@ -1,0 +1,12 @@
+Source: ros-rolling-mrpt-apps-cli
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, ros-rolling-mrpt-common, ros-rolling-mrpt-libapps-cli, ros-rolling-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-rolling-mrpt-apps-cli
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-mrpt-common, ros-rolling-mrpt-libapps-cli, ros-rolling-ros-workspace
+Description: MRPT command line applications
