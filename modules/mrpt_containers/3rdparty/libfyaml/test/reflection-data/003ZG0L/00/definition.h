@@ -1,3 +1,0 @@
-struct map {
-	int key;
-};
