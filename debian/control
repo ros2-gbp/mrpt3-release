@@ -1,0 +1,12 @@
+Source: ros-jazzy-mrpt-libapps-cli
+Section: misc
+Priority: optional
+Maintainer: "Jose-Luis Blanco-Claraco" <joseluisblancoc@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), cmake, libcli11-dev, ros-jazzy-mrpt-hwdrivers, ros-jazzy-mrpt-slam, ros-jazzy-mrpt-topography, ros-jazzy-ros-workspace
+Homepage: https://github.com/MRPT/
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-mrpt-libapps-cli
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libcli11-dev, ros-jazzy-mrpt-hwdrivers, ros-jazzy-mrpt-slam, ros-jazzy-mrpt-topography, ros-jazzy-ros-workspace
+Description: The MRPT C++ library mrpt_libapps_cli
