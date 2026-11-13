@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""
+Point clouds, occupancy grids, voxel maps and multi-maps with mrpt.maps.
+
+Demonstrates:
+  - CSimplePointsMap: point cloud creation, numpy import/export
+  - COccupancyGridMap2D: create, set/get cells, numpy export
+"""
+
+import numpy as np
+import tempfile, os
+from mrpt.maps import CSimplePointsMap, COccupancyGridMap2D
+
+# ---------------------------------------------------------------------------
+# CSimplePointsMap — XYZ point cloud
+# ---------------------------------------------------------------------------
+pts = CSimplePointsMap()
+
+# Insert individual points
+for i in range(5):
+    pts.insertPoint(float(i), float(i) * 0.1, 0.0)
+
+print(f"CSimplePointsMap: {len(pts)} points")
+x, y, z = pts.getPoint(2)
+print(f"  point[2]: ({x:.2f}, {y:.2f}, {z:.2f})")
+
+# NumPy round-trip
+cloud = np.array([[1.0, 2.0, 3.0],
+                  [4.0, 5.0, 6.0],
+                  [7.0, 8.0, 9.0]], dtype=np.float32)
+pts2 = CSimplePointsMap()
+pts2.setPointsFromNumpy(cloud)
+arr = pts2.getPointsAsNumpy()
+print(f"\nNumPy round-trip: {arr.shape}")
+np.testing.assert_allclose(arr, cloud, atol=1e-5)
+print("  numpy round-trip ✓")
+
+# Save/load text
+with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+    fname = f.name
+try:
+    pts2.save3D_to_text_file(fname)
+    pts3 = CSimplePointsMap()
+    pts3.load3D_from_text_file(fname)
+    assert pts3.size() == 3
+    print(f"  save/load text ✓ ({pts3.size()} points)")
+finally:
+    os.unlink(fname)
+
+# ---------------------------------------------------------------------------
+# COccupancyGridMap2D — probabilistic 2D occupancy grid
+# ---------------------------------------------------------------------------
+grid = COccupancyGridMap2D(-5.0, 5.0, -5.0, 5.0, 0.1)  # 10x10 m, 0.1 m/cell
+print(f"\nCOccupancyGridMap2D: {grid.getSizeX()}x{grid.getSizeY()} cells, "
+      f"res={grid.getResolution()} m")
+
+# Mark an obstacle cell (low probability = occupied)
+grid.setCell(50, 50, 0.1)
+grid.setPos(1.0, 1.0, 0.1)
+
+print(f"  cell(50,50) occupancy = {grid.getCell(50,50):.2f}")
+print(f"  pos(1,1) occupancy    = {grid.getPos(1.0,1.0):.2f}")
+
+# Index ↔ metric conversion
+ix = grid.x2idx(1.0)
+iy = grid.y2idx(1.0)
+print(f"  pos(1,1) → cell index ({ix},{iy})")
+print(f"  cell({ix},{iy}) → pos ({grid.idx2x(ix):.2f},{grid.idx2y(iy):.2f})")
+
+# NumPy export
+g_np = grid.getAsNumpy()
+print(f"\nGrid as numpy: shape={g_np.shape}, dtype={g_np.dtype}")
+assert g_np.shape == (grid.getSizeY(), grid.getSizeX())
+print("  numpy export ✓")
+
+# ---------------------------------------------------------------------------
+# CMultiMetricMap: several maps defined in a config file, updated together
+# ---------------------------------------------------------------------------
+import math
+from mrpt.config import CConfigFileMemory
+from mrpt.maps import CMultiMetricMap, TSetOfMetricMapInitializers, CVoxelMap, COctoMap
+from mrpt.obs import CObservation2DRangeScan, CSensoryFrame
+from mrpt.math import TPoint3D
+from mrpt.poses import CPose3D
+
+map_defs = TSetOfMetricMapInitializers()
+map_defs.loadFromConfigFile(CConfigFileMemory(
+    "[Maps]\noccupancyGrid_count=1\npointsMap_count=1\n"
+    "[Maps_occupancyGrid_00_creationOpts]\nresolution=0.05\n"), "Maps")
+multimap = CMultiMetricMap(map_defs)
+print(f"\n{multimap}: {[type(m).__name__ for m in multimap]}")
+
+scan = CObservation2DRangeScan()
+scan.aperture = math.pi
+scan.resizeScan(181)
+for i in range(181):
+    scan.setScanRange(i, 3.0)
+    scan.setScanRangeValidity(i, True)
+sf = CSensoryFrame()
+sf.insert(scan)
+multimap.insertObs(sf)  # inserted into both maps
+points = next(m for m in multimap if isinstance(m, CSimplePointsMap))
+print(f"  points after inserting a scan: {len(points)}")
+print(f"  observation log-likelihood at origin: "
+      f"{multimap.computeObservationLikelihood(scan, CPose3D()):.2f}")
+
+# ---------------------------------------------------------------------------
+# 3D occupancy: sparse voxel map and octomap
+# ---------------------------------------------------------------------------
+voxels = CVoxelMap(0.1)
+voxels.insertPointCloudAsRays(points, TPoint3D(0, 0, 0))
+wall_pt = points.getPoint(90)  # (x, y, z) of the central ray end point
+print(f"\nCVoxelMap: {len(voxels.getOccupiedVoxels())} occupied voxels, "
+      f"p(occupied) at a wall = {voxels.getPointOccupancy(*wall_pt):.2f}, "
+      f"at the sensor = {voxels.getPointOccupancy(0.5, 0.0, 0.0):.2f}")
+
+octo = COctoMap(0.1)
+octo.insertPointCloud(points, 0.0, 0.0, 0.0)
+print(f"COctoMap: {octo.size()} nodes")
