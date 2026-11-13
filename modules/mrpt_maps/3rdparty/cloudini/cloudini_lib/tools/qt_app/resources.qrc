@@ -1,6 +1,0 @@
-<RCC>
-    <qresource prefix="/">
-        <file>clouds_decode.png</file>
-        <file>clouds_encode.png</file>
-    </qresource>
-</RCC>
