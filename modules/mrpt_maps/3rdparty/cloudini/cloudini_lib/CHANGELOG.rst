@@ -1,0 +1,472 @@
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Changelog for package cloudini_lib
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+1.4.1 (2026-09-29)
+------------------
+* fix: build with MSVC. The V6 encoder called the GCC/Clang builtin ``__builtin_clzll``;
+  it now uses ``std::countl_zero``. Output is unchanged.
+* ci: build and test the library with MSVC on Windows.
+
+1.4.0 (2026-09-28)
+------------------
+* feat: V6 wire format, now the default (`#150 <https://github.com/facontidavide/cloudini/issues/150>`_)
+
+  * V6 codes x, y, z as residual streams against a predictor chosen per chunk (previous
+    point, point K back, LOCO-I median of the two, second order), skips no-return points
+    with a validity mask, and gives every other float field its own stream. With ZSTD,
+    the median output is 13% smaller than V5 on 13 LiDAR/depth datasets.
+  * Encoders write V6 by default. Decoders from 1.3.1 and earlier cannot read it: select
+    version 5 for them (``--encoding-version 5``, ``encoding_version:=5``,
+    ``cloudini_encoding_version: 5``, or ``EncodingInfo::version = 5``).
+  * Resolutions are refined to the data by default (``RefineResolutionsToData``):
+    integer-valued floats such as intensity are stored at resolution 1, with the same
+    error bound. On a 2.8 GB warehouse bag, V6 with refinement is 24% smaller than 1.3.1
+    and decodes 1.75x faster. ``cloudini_rosbag_converter --no-refine`` turns it off.
+  * V5: adaptive integer sections sized for the stage-2 compressor (same format).
+  * Faster decode of V4, V5 and V6 (same bytes on the wire): up to +59% for V4 clouds
+    with integer fields.
+  * ``PointcloudEncoderCache`` keeps one encoder per stream (rosbag converter, topic
+    converter, point_cloud_transport plugin, ``SerializeCompressedPointCloud2``).
+  * Fixes: heap overflow on crafted V5 RLE runs; writes past the output for fields
+    beyond point_step; misaligned loads of packed fields; signed overflow on corrupted
+    input; encoding versions no decoder reads are rejected by the encoder.
+  * Tools: ``mcap_codec_benchmark`` V6 and V6-viz modes, ``--profile`` and
+    ``--no-refine``; ``cloudini_rosbag_converter --no-refine``, profile files read whole.
+* fix: a cloud from a newer Cloudini fails with an error that asks to update Cloudini
+  (library, ROS package or Foxglove extension), instead of "Unsupported encoding version"
+* fix: keep packed rgb/rgba FLOAT32 fields lossless (`#135 <https://github.com/facontidavide/cloudini/issues/135>`_) (`#146 <https://github.com/facontidavide/cloudini/issues/146>`_)
+  Some ROS drivers pack RGB(A) as uint32 bits reinterpreted into a FLOAT32
+  field named "rgb"/"rgba". Every path that assigned a default resolution
+  to FLOAT32 fields quantized these bits, destroying the colors.
+  Add Cloudini::isPackedColorField() / defaultFieldResolution() in
+  basic_types.hpp and use them in applyResolutionProfile, the PCL
+  ConvertToEncodingInfo, the WASM encode helpers and the ROS
+  ConvertToEncodingInfo. An explicit resolution profile entry still wins.
+  Decoding needs no change: resolution is stored in the header.
+  Claude-Session: https://claude.ai/code/session_01EAorWbhzp56yxAVUF7M3Dd
+  Co-authored-by: Claude <noreply@anthropic.com>
+* fix: parse/format header resolution locale-independently (`#123 <https://github.com/facontidavide/cloudini/issues/123>`_) (`#145 <https://github.com/facontidavide/cloudini/issues/145>`_)
+  The YAML header resolution was parsed with std::stof, which honors the C
+  locale: with a ',' decimal separator (e.g. de_DE.UTF-8) "0.001" was read
+  as 0 and FieldDecoderFloatN_Lossy threw during decoding. The writer used
+  an ostringstream, which follows the global C++ locale (std::locale::global)
+  and could emit "0,001" or grouped integers such as "1.234.567".
+  - EncodingInfoToYAML: imbue the stream with std::locale::classic() and
+  write resolutions with the shortest precision that round-trips exactly.
+  - EncodingInfoFromYAML: parse resolution with a classic-locale stream.
+  - YAML::Node::parseScalar: imbue std::locale::classic().
+  Streams are used instead of std::from_chars/to_chars for float because
+  those are not available on all supported standard libraries (older libc++).
+  Add regression tests that switch to a comma-decimal locale (C locale only,
+  and C + global C++ locale), skipped if no such locale is installed.
+  Claude-Session: https://claude.ai/code/session_01EAorWbhzp56yxAVUF7M3Dd
+  Co-authored-by: Claude <noreply@anthropic.com>
+* Contributors: Davide Faconti
+
+1.3.1 (2026-09-20)
+------------------
+* build: make cloudini_lib embeddable with add_subdirectory / FetchContent (`#142 <https://github.com/facontidavide/cloudini/issues/142>`_)
+  Reuses zstd/lz4 targets defined by a parent project, ignores an inherited ament_cmake,
+  and keeps the build type, tests, tools, benchmarks, PCL and install rules out of the
+  parent. New options CLOUDINI_WITH_PCL and CLOUDINI_INSTALL; cloudini::cloudini_lib is
+  always defined.
+* fix: link Threads::Threads (static consumers failed with undefined pthread_create)
+* fix: reject inconsistent point clouds; make ros_message_definitions.hpp includable twice (`#141 <https://github.com/facontidavide/cloudini/issues/141>`_)
+* The CMake project version now matches package.xml (it was left at 1.2.4 in 1.3.0)
+* Contributors: Davide Faconti
+
+1.3.0 (2026-09-20)
+------------------
+* feat(packaging): conda/pixi package for prefix.dev + conda-forge (`#133 <https://github.com/facontidavide/cloudini/issues/133>`_)
+  * feat(packaging): add conda/pixi package (prefix.dev + conda-forge)
+  Ship cloudini as a conda package (shared library + headers + CMake package
+  config + cloudini_rosbag_converter CLI), buildable with rattler-build and
+  publishable to prefix.dev and conda-forge.
+  Library/CMake changes to make it installable outside ament:
+  - install(EXPORT) + generated cloudini_libConfig.cmake for standalone builds,
+  so downstream can find_package(cloudini_lib) and link cloudini::cloudini_lib
+  - $ORIGIN/../lib install RPATH so installed executables locate the lib
+  - prefer shared zstd/lz4 variants when the library itself is shared
+  - find_or_download_zstd.cmake: accept conda's zstd::libzstd_shared / zstd::libzstd
+  (conda-forge ships no static zstd) instead of vendoring a copy
+  - find_or_download_mcap.cmake: -DMCAP_INCLUDE_DIR offline hook (no-network builds)
+  - pin mcap_converter STATIC so the CLI stays self-contained under BUILD_SHARED_LIBS=ON
+  conda/recipe.yaml is hermetic (no network at build): links conda zstd/lz4-c,
+  uses conda cxxopts, and consumes a pre-fetched mcap source. Same recipe serves
+  prefix.dev and conda-forge/staged-recipes. conda/RELEASING.md documents the
+  release + publish workflow.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * release: pin cloudini 1.2.4 source sha256
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * fix(cmake): export static compression dependencies and test installed consumers
+  * docs(conda): update release validation and publishing guidance
+  * ci: test Pixi packages and replace Kilted with Lyrical
+  ---------
+  Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+* Regression test for decoder buffer sizing (`#139 <https://github.com/facontidavide/cloudini/issues/139>`_) + clang-format pass (`#140 <https://github.com/facontidavide/cloudini/issues/140>`_)
+  * test: regression for decoder buffer sizing with expanding stage-1 encoding
+  Single-chunk lossless cloud of incompressible FLOAT64/UINT32 data, whose
+  stage-1 encoding exceeds width*height*point_step. Fails with "LZ4
+  decompression failed" before 9765a54 (`#139 <https://github.com/facontidavide/cloudini/issues/139>`_).
+  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+  * chore: apply clang-format repo-wide, skip vendored contrib in the hook
+  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+  ---------
+  Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>
+* fix(PointcloudDecoder): improve max decompressed size calculation for chunk decoding
+* Fix license tags in package.xml
+  According to ros_license_toolkit[^1] license tags should be in SPDX
+  list of licenses. In case of claudini_ros, the license version was
+  missing and in case of claudini_lib, the license name was not "exact".
+  This commit changes the license tags to use SPDX license identifiers.
+  Note that it doesn't fix the failures reported in claudini_lib in the
+  output below:
+  [cloudini_ros]
+  git hash of (/home/src/github.com/facontidavide/cloudini): d202e5255d12519ff1f3db1dac4df3ca0e550ee7
+  SchemaCheck
+  SUCCESS Detected package.xml version 3, validation of scheme successful.
+  LicenseTagExistsCheck
+  SUCCESS Found licenses ['Apache']
+  LicenseTagIsInSpdxListCheck
+  WARNING Licenses ['Apache'] are not in SPDX list of licenses. Make sure to exactly match one of https://spdx.org/licenses/.
+  LicenseTextExistsCheck
+  WARNING Since they are not in the SPDX list, we can not check if these tags have the correct license text:
+  'Apache': License text file '../LICENSE' is of license Apache-2.0 but tag is Apache.
+  LicensesInCodeCheck
+  WARNING For the following files, please change the License Tag in the package file to SPDX format:
+  'include/cloudini_plugin/cloudini_publisher_plugin.hpp' is of Apache-2.0 but its Tag is Apache.
+  'include/cloudini_plugin/cloudini_subscriber_plugin.hpp' is of Apache-2.0 but its Tag is Apache.
+  'include/cloudini_ros/cloudini_subscriber_pcl.hpp' is of Apache-2.0 but its Tag is Apache.
+  'include/cloudini_ros/conversion_utils.hpp' is of Apache-2.0 but its Tag is Apache.
+  'src/cloudini_publisher_plugin.cpp' is of Apache-2.0 but its Tag is Apache.
+  'src/cloudini_subscriber_pcl.cpp' is of Apache-2.0 but its Tag is Apache.
+  'src/cloudini_subscriber_plugin.cpp' is of Apache-2.0 but its Tag is Apache.
+  'src/conversion_utils.cpp' is of Apache-2.0 but its Tag is Apache.
+  'src/plugin_manifest.cpp' is of Apache-2.0 but its Tag is Apache.
+  'src/topic_converter.cpp' is of Apache-2.0 but its Tag is Apache.
+  'test/draco_helper.cpp' is of Apache-2.0 but its Tag is Apache.
+  'test/draco_helper.hpp' is of Apache-2.0 but its Tag is Apache.
+  'test/rosbag_benchmark.cpp' is of Apache-2.0 but its Tag is Apache.
+  'test/test_cloudini_subscriber.cpp' is of Apache-2.0 but its Tag is Apache.
+  'test/test_direct_publisher.cpp' is of Apache-2.0 but its Tag is Apache.
+  'test/test_plugin_publisher.cpp' is of Apache-2.0 but its Tag is Apache.
+  'test/test_plugin_subscriber.cpp' is of Apache-2.0 but its Tag is Apache.
+  LicenseFilesReferencedCheck
+  SUCCESS All license declaration are referenced by a tag.
+  --------------------
+  [cloudini_lib]
+  git hash of (/home/src/github.com/facontidavide/cloudini): d202e5255d12519ff1f3db1dac4df3ca0e550ee7
+  SchemaCheck
+  SUCCESS Detected package.xml version 3, validation of scheme successful.
+  LicenseTagExistsCheck
+  SUCCESS Found licenses ['Apache 2.0']
+  LicenseTagIsInSpdxListCheck
+  WARNING Licenses ['Apache 2.0'] are not in SPDX list of licenses. Make sure to exactly match one of https://spdx.org/licenses/.
+  LicenseTextExistsCheck
+  WARNING Since they are not in the SPDX list, we can not check if these tags have the correct license text:
+  'Apache 2.0': License text file '../LICENSE' is of license Apache-2.0 but tag is Apache 2.0.
+  LicensesInCodeCheck
+  FAILURE
+  The following files contain licenses that are not covered by any license tag:
+  'benchmarks/pcd_benchmark.cpp': ['MIT']
+  'cmake/CPM.cmake': ['MIT']
+  'include/cloudini_lib/ros_message_definitions.hpp': ['BSD-3-Clause']
+  'include/cloudini_lib/contrib/ankerl/stl.h': ['MIT']
+  'include/cloudini_lib/contrib/ankerl/unordered_dense.h': ['MIT']
+  LicenseFilesReferencedCheck
+  SUCCESS All license declaration are referenced by a tag.
+  [^1]: https://github.com/boschresearch/ros_license_toolkit
+* Preserve the channel metadata
+* Contributors: Davide Faconti, Guillaume Doisy, Michal Sojka, Tony Najjar
+
+1.2.2 (2026-06-04)
+------------------
+* fix(field_encoder): use C++20 [[likely]]/[[unlikely]] instead of __builtin_expect (enables MSVC)
+
+1.2.1 (2026-05-20)
+------------------
+* build(cmake): honor BUILD_SHARED_LIBS for standalone (non-ament) builds
+
+1.2.0 (2026-05-05)
+------------------
+* fix(cmake): vendor ankerl::unordered_dense to fix ROS buildfarm
+* chore: clean up v5 codec review notes
+* fix: harden cloudini decode error handling
+* feat: add cloudini v5 adaptive codec
+* Contributors: Davide Faconti
+
+1.1.0 (2026-04-20)
+------------------
+* feat(gorilla): Gorilla bit-packed XOR for FLOAT64 lossless (backward compatible) (`#93 <https://github.com/facontidavide/cloudini/issues/93>`_)
+* Contributors: Davide Faconti
+
+1.0.4 (2026-04-06)
+------------------
+
+1.0.2 (2026-03-04)
+------------------
+* fix(cmake): link libzstd.so in ROS builds instead of non-PIC libzstd.a
+  The IMPORTED_LOCATION set_property hack on STATIC IMPORTED targets is ignored
+  by CMake at link time. The correct fix: explicitly select zstd::libzstd_shared
+  (always PIC) over zstd::libzstd_static (system libzstd.a, not PIC) when
+  building in ament context where cloudini_lib is compiled as a shared library.
+  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+* fix(cmake): override all IMPORTED_LOCATION variants for system zstd to use shared lib
+  The zstd cmake config sets IMPORTED_LOCATION_RELEASE in addition to
+  IMPORTED_LOCATION; CMake checks config-specific properties first so overriding
+  only IMPORTED_LOCATION was insufficient. Override all four config variants so
+  cloudini_lib.so links against libzstd.so (PIC) instead of libzstd.a (non-PIC).
+  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+* fix(cmake): fix two more buildfarm failures exposed by FETCHCONTENT_FULLY_DISCONNECTED
+  Jazzy (Noble) - libzstd.a not compiled with -fPIC:
+  System libzstd.a from libzstd-dev cannot be embedded in libcloudini_lib.so
+  (shared library). Redirect zstd::libzstd_static to point to libzstd.so when
+  both static and shared targets are available from the system package.
+  Humble - mcap_vendor types.inl missing:
+  ros-humble-mcap-vendor installs types.hpp that #include "types.inl" but
+  types.inl is absent from the installed headers. The mcap rosbag/cutter tools
+  are standalone utilities, not ROS nodes; skip building them when ament_cmake
+  is found. Move find_or_download_mcap() inside the tools block so mcap is only
+  fetched/linked in standalone builds where CPM downloads work.
+  Also remove mcap_vendor and libcxxopts-dev from package.xml build_depends
+  since neither is needed when tools are not built in ROS context.
+  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+* fix(cmake): use system LZ4/ZSTD packages in ROS builds instead of CPM
+  Three bugs prevented the find_package fallbacks in find_or_download_zstd/lz4
+  from ever running:
+  1. set(CLOUDINI_FORCE_VENDORED_DEPS OFF FORCE) without CACHE created the
+  value "OFF;FORCE" (truthy) instead of "OFF"
+  2. find_or_download_zstd/lz4 called with the literal string
+  "CLOUDINI_FORCE_VENDORED_DEPS" instead of ${CLOUDINI_FORCE_VENDORED_DEPS},
+  so FORCE_VENDORED was always a truthy non-empty string and if(NOT
+  FORCE_VENDORED) was permanently false
+  3. Ubuntu Jammy liblz4-dev has no cmake config file, so find_package(lz4
+  CONFIG) and find_package(LZ4) both fail; add find_library fallback
+  Together these caused CPM to always attempt GitHub downloads — blocked on the
+  ROS buildfarm and now caught locally by FETCHCONTENT_FULLY_DISCONNECTED=ON.
+  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+* fix(ci): add FETCHCONTENT_FULLY_DISCONNECTED=ON to match ROS buildfarm behavior
+  Pass -DFETCHCONTENT_FULLY_DISCONNECTED=ON through colcon-defaults in both
+  Jazzy and Humble workflows so CPM/FetchContent download attempts fail in CI
+  before reaching build.ros2.org.
+  Also include the cmake fixes that triggered this investigation:
+  - find_or_download_mcap: prefer system mcap_vendor before CPM download
+  - tools/CMakeLists.txt: prefer system cxxopts before CPM download
+  - package.xml: add libcxxopts-dev build_depend for buildfarm rosdep install
+  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+* Contributors: Davide Faconti
+
+1.0.1 (2026-03-01)
+------------------
+* fix(ci): use correct rosdep key libpcl-all-dev for PCL
+  libpcl-dev is not a valid rosdep key (KeyError on buildfarm).
+  The correct key is libpcl-all-dev which resolves to apt package
+  libpcl-dev. This also fixes the original Humble buildfarm issue:
+  the old libpcl-common/libpcl-io keys only installed runtime libs
+  (libpcl-common1.12), never the dev headers/PCLConfig.cmake needed
+  by find_package(PCL).
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+* fix(ci): use system packages in ROS builds to fix buildfarm compilation (`#72 <https://github.com/facontidavide/cloudini/issues/72>`_)
+  * fix(ci): use system packages in ROS builds to fix buildfarm compilation
+  Two buildfarm failures fixed:
+  1. Jazzy Noble ARM64 (cloudini_lib): buildfarm sets
+  FETCHCONTENT_FULLY_DISCONNECTED=ON, but CLOUDINI_FORCE_VENDORED_DEPS
+  was forced ON in ament builds, skipping find_package() and trying to
+  CPM-download zstd/lz4. With no network, file(GLOB) returned empty
+  sources and add_library() failed. Fix: force FORCE_VENDORED=OFF when
+  ament is found so system packages (declared in package.xml) are used.
+  2. Humble Jammy ARM64 (cloudini_ros): libpcl-common + libpcl-io rosdep
+  keys only install component libs without PCLConfig.cmake, so
+  find_package(PCL QUIET) silently failed and pcl_conversion.cpp was
+  excluded from libcloudini_lib.so. PCLPointCloudDecode was then
+  missing at link time when building cloudini_ros. Fix: use libpcl-dev
+  which ships the full CMake config.
+  Also fix find_package() calls to use CONFIG mode with lowercase package
+  names (zstd/lz4) matching the actual CMake config files provided by
+  Ubuntu's libzstd-dev and liblz4-dev packages, with fallback to module
+  mode for compatibility.
+  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+  * fix(ci): use Docker containers for Humble and Jazzy workflows
+  Bare runners fail because:
+  - Humble: setup-ros installs minimal ROS without typesupport
+  implementations, causing "No rosidl_typesupport_c found"
+  - Jazzy: Ubuntu 24.04 PEP 668 Python isolation conflicts with
+  setup-ros pip-installed tools, causing "No module ament_package"
+  Switch to rostooling/setup-ros-docker containers with ros-base
+  pre-installed, which have the correct ROS + Python environment.
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+  ---------
+  Co-authored-by: Claude Sonnet 4.6 <noreply@anthropic.com>
+* Contributors: Davide Faconti
+
+1.0.0 (2026-02-21)
+-------------------
+* minor changes
+* feat: add bag directory support and metadata.yaml generation to rosbag converter
+  The converter now accepts ROS2 bag directories as input (in addition to
+  bare .mcap files), auto-detects sibling metadata.yaml, and generates a
+  transformed metadata.yaml alongside the output with updated topic types
+  and file references. Output defaults to a new sibling directory to
+  prevent accidental overwrites of the original bag.
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+* feat: add single-threaded compression mode to PointcloudEncoder
+  Add `use_threads` field to EncodingInfo (defaults to true). When false,
+  LZ4/ZSTD compression runs inline in the calling thread instead of
+  spawning a worker thread. Useful for simpler deployments, debugging,
+  and environments where threading overhead isn't worth the pipelining
+  benefit.
+  No wire format changes — the field is runtime-only and not serialized.
+* Fixed cmake issues and added some improvements (`#55 <https://github.com/facontidavide/cloudini/issues/55>`_)
+* fix: harden encoder/decoder against UB, data races, and corrupted input (`#57 <https://github.com/facontidavide/cloudini/issues/57>`_)
+  * fix: harden encoder/decoder against UB, data races, and corrupted input
+  Address issues found during code review:
+  - Fix decodeVarint shift UB: check overflow before shift operation
+  - Fix decodeVarint underflow: guard against uval==0 on corrupted data
+  - Fix worker thread deadlock: detect dead worker on subsequent encode()
+  - Fix WASM encode: avoid extra allocation by encoding directly when buffer fits
+  - Clean up waitForCompressionComplete: only set worker_failed\_ in error path
+  - Optimize encode(BufferView&): use header\_.size() instead of YAML reserialization
+  - Improve readability and error messages in DecodeHeader/MaxSerializedFieldSize
+  - Add explicit <cstring> include in encoding_utils.hpp
+  - Fix pre-existing FloatLossy test bug: use float instead of double for kResolution
+  - Re-enable previously commented-out tests
+  * fix: additional hardening for decoder bounds checks and encoder thread safety
+  - Add per-point bounds check in decodeChunk to replace per-field checks in
+  fixed-size decoders (FieldDecoderCopy, FieldDecoderFloat_XOR), eliminating
+  12-14% decode overhead while maintaining safety
+  - Keep per-field checks for variable-size decoders (Float_Lossy, FloatN_Lossy)
+  where overhead is negligible relative to varint decoding
+  - Fix encoder deadlock on re-use after worker thread failure by joining dead
+  thread and re-spawning; protect shared state resets with mutex
+  - Tighten decodeVarint overflow check from shift>=64 to shift>=63
+  - Derive point count from actual data size in ROS conversion instead of
+  trusting metadata width*height to prevent over-allocation DoS
+  * fix: remove non-existent apt package from Jazzy CI workflow
+  python3-ament-package does not exist on Ubuntu 24.04. The setup-ros
+  action and action-ros-ci already handle installing colcon and ament
+  dependencies, matching the working Humble CI workflow.
+  * fix: install ros-humble-ament-cmake-test for test runner
+  * revert some changes
+  ---------
+  Co-authored-by: Claude Opus 4.6 <noreply@anthropic.com>
+* Need to add these constructors for emscripten build to work on ubuntu 24 (`#54 <https://github.com/facontidavide/cloudini/issues/54>`_)
+  * Need to add these constructors for emscripten build to work
+  * add default ctors and default values
+  ---------
+* Contributors: Alireza Moayyedi, Davide Faconti, tomdeblauwe
+
+0.11.1 (2025-12-12)
+-------------------
+* fix ROS compilation
+* Contributors: Davide Faconti
+
+0.11.0 (2025-11-29)
+-------------------
+* optimize yaml parser
+* yaml parser
+* fix benchmark
+* add better Draco benchmarking
+* Contributors: Davide Faconti
+
+0.10.0 (2025-10-13)
+-------------------
+* working on the python code
+* critical bug fix
+* update
+* try fixing multi-threading code
+* cherry picking change from `#38 <https://github.com/facontidavide/cloudini/issues/38>`_ . Better function name
+  Thanks @Tanishq30052002 for the suggestions
+* tons of ROS examples and utilities
+* Contributors: Davide Faconti
+
+0.9.0 (2025-10-11)
+------------------
+* fix error in wasm module
+* fix mcap_converter
+* remove redundancy
+* Fix redundancy in ros msg utils (`#37 <https://github.com/facontidavide/cloudini/issues/37>`_)
+  * remove redundant function
+  * remove code redundancy
+  * move header decoding to common
+* Contributors: Davide Faconti, Tanishq Chaudhary
+
+0.8.0 (2025-10-09)
+------------------
+* Merge branch 'main' into msadowski/release_foxglove_extension
+* Merge pull request `#33 <https://github.com/facontidavide/cloudini/issues/33>`_ from facontidavide/refactor_ros_interface
+* updated wasm plugin
+* changes API
+* Remove 'lz4' compression method support (`#32 <https://github.com/facontidavide/cloudini/issues/32>`_)
+* use function argument
+* force vendoring?
+* Preprare ros release (`#28 <https://github.com/facontidavide/cloudini/issues/28>`_)
+* Contributors: Davide Faconti
+
+0.7.0 (2025-09-19)
+------------------
+* Merge pull request `#27 <https://github.com/facontidavide/cloudini/issues/27>`_ from facontidavide/yaml_encoding
+  Yaml encoding
+* each chunk should reset the state of encoders/decoders to allow parallel extraction
+* fix PCD conversion
+* use YAML instead
+* add JSON encoding to header and WIP pcl_converter
+* version 03: add multi-threading and chunks
+* Contributors: Davide Faconti
+
+0.6.1 (2025-08-28)
+------------------
+* bug fix (memory boundaries) and typo addressed
+* better benchmark print
+* Contributors: Davide Faconti
+
+0.5.0 (2025-06-30)
+------------------
+* fix 64 bits types
+* don't create an encoder at each loop
+* add mcap cutter utility
+* speedup in rosbag conversion
+* fix compilation (clang++ 20) (`#18 <https://github.com/facontidavide/cloudini/issues/18>`_)
+  Co-authored-by: Giuseppe Rizzi <giuseppe.rizzi@ascento.ch>
+* Contributors: Davide Faconti, Giuseppe Rizzi
+
+0.4.0 (2025-06-15)
+------------------
+* downgrade MCAP for compatibility with ROS2 Jazzy
+* make MCAP a private dependency and copy metadata (`#17 <https://github.com/facontidavide/cloudini/issues/17>`_)
+  * make MCAP a private dependency and copy metadata
+  * minor cleanup
+* fix buffer size in worst case scenario (`#16 <https://github.com/facontidavide/cloudini/issues/16>`_)
+  Co-authored-by: Giuseppe Rizzi <giuseppe.rizzi@ascento.ch>
+* Contributors: Davide Faconti, Giuseppe Rizzi
+
+0.3.3 (2025-06-11)
+------------------
+* Compression profile (MCAP writer) (`#14 <https://github.com/facontidavide/cloudini/issues/14>`_)
+  Co-authored-by: Giuseppe Rizzi <giuseppe.rizzi@ascento.ch>
+* Null character termination (`#13 <https://github.com/facontidavide/cloudini/issues/13>`_)
+* add experimental WASM + web tester
+* Contributors: Davide Faconti, Giuseppe Rizzi
+
+0.3.1 (2025-06-10)
+------------------
+* fix formatting
+* Merge branch 'main' of github.com:facontidavide/cloudini
+* small speed optimization
+* fix bugs in PCL
+* fix compilation on arm (`#9 <https://github.com/facontidavide/cloudini/issues/9>`_)
+  Co-authored-by: Giuseppe Rizzi <giuseppe.rizzi@ascento.ch>
+* Contributors: Davide Faconti, Giuseppe Rizzi
+
+0.3.0 (2025-06-03)
+------------------
+* PCL conversion fixed and tested
+* same speed with varint 64
+* small fix
+* Contributors: Davide Faconti
+
+0.2.0 (2025-05-31)
+------------------
+* faster DDS decompression with less copies
+* add license
+* Contributors: Davide Faconti
